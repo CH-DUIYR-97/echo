@@ -1,0 +1,50 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isOwner(uid) { return signedIn() && request.auth.uid == uid; }
+
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow write: if false;
+
+      match /posts/{postId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid)
+                      && request.resource.data.userId == uid;
+        allow update: if isOwner(uid)
+                      && request.resource.data.keys().hasAll(['userId'])
+                      && request.resource.data.userId == resource.data.userId
+                      && resource.data.userId == uid;
+        allow delete: if isOwner(uid);
+      }
+
+      match /usage/{day} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
+      match /billing/{docId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
+      // RECOMMENDED feedback structure:
+      match /posts/{postId}/stt/{sttId} {
+        allow read: if isOwner(uid);
+        allow create, update, delete: if false;
+
+        match /feedback/{feedbackUid} {
+          allow read: if isOwner(uid);
+          allow create: if isOwner(uid)
+                        && feedbackUid == uid
+                        && request.resource.data.keys().hasOnly(['rating','createdAt'])
+                        && request.resource.data.rating in ['up','down'];
+          allow update, delete: if false;
+        }
+      }
+
+      // If you keep the flat structure instead, delete the block above and use the Option B block.
+    }
+  }
+}

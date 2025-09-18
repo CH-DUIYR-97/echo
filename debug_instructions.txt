@@ -1,0 +1,25 @@
+🐛 STEP 1 DEBUG INSTRUCTIONS
+
+1. Open your file: functions/src/index.ts
+
+2. Find line 188 (which currently says):
+   console.log(`📊 Final transcription selected with confidence: ${confidence?.toFixed(3) ?? 'N/A'}`);
+
+3. Add this NEW line right after line 188:
+   console.log(`🐛 STEP 1 DEBUG: Processing text: "${transcriptText}" (length: ${transcriptText.length}, raw bytes: ${JSON.stringify([...transcriptText])})`);
+
+4. Your code should look like this:
+   
+   Line 187: 
+   Line 188: console.log(`📊 Final transcription selected with confidence: ${confidence?.toFixed(3) ?? 'N/A'}`);
+   Line 189: console.log(`🐛 STEP 1 DEBUG: Processing text: "${transcriptText}" (length: ${transcriptText.length}, raw bytes: ${JSON.stringify([...transcriptText])})`);
+   Line 190: 
+   Line 191: // 🎯 COMPREHENSIVE: Extensive hallucination detection patterns
+
+5. Save the file
+
+6. Deploy: firebase deploy --only functions
+
+7. Test by coughing into mic
+
+8. Check Firebase Console → Functions → Logs for the debug output

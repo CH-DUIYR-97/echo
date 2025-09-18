@@ -1,0 +1,492 @@
+// functions/src/index.js
+import { onCall } from "firebase-functions/v2/https";
+import { defineSecret } from "firebase-functions/params";
+import { setGlobalOptions } from "firebase-functions";
+import * as admin from "firebase-admin";
+import { getAudioDurationInSeconds, getMinutesUntilMidnightAEST, checkAndResetIfNewDay, checkSpeechEnforcement2 } from "./audioUtils";
+
+setGlobalOptions({ maxInstances: 10 });
+admin.initializeApp();
+
+// Grab the OpenAI key from Functions secrets (set this below)
+const OPENAI_API_KEY = defineSecret("OPENAI_API_KEY");
+
+// 🎯 DEBUG TOGGLES: Environment-based configuration
+const DEBUG_TRANSCRIBE = process.env.ECHO_DEBUG_TRANSCRIBE === '1';
+const STRICT_HALLUCINATION_BLOCK = process.env.ECHO_HALLUCINATION_STRICT === '1';
+// In prod: STRICT=true, DEBUG=false. In dev: STRICT=false, DEBUG=true
+
+// 🎯 CONSERVATIVE HALLUCINATION DETECTION: Only block obvious garbage
+function detectHallucination(raw: string) {
+  // Keep this conservative; log which rule matched.
+  if (!raw || raw.trim().length === 0) return { matched: true, rule: 'empty' };
+
+  const normalized = raw.trim();
+
+  // "garbage only" (punctuation/emoji) & super short
+  if (/^[\W_]+$/.test(normalized) && normalized.length < 6) {
+    return { matched: true, rule: 'nonverbal_garbage' };
+  }
+
+  // Common placeholder labels from some models
+  if (/\b(inaudible|music|background noise)\b/i.test(normalized)) {
+    return { matched: true, rule: 'placeholder_label' };
+  }
+
+  // If it looks like a timestamp transcript only
+  if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(normalized)) {
+    return { matched: true, rule: 'timestamp_only' };
+  }
+
+  // Heuristic: if it has at least 1 letter and length ≥ 4, let it pass.
+  // (Prevents false positives on short real words like "Yep.")
+  if (/[A-Za-z]/.test(normalized) && normalized.length >= 4) {
+    return { matched: false };
+  }
+
+  // Default: don't block
+  return { matched: false };
+}
+
+/**
+ * Callable function:
+ * Frontend passes { storagePath, mimeType }
+ * - We download the audio from Firebase Storage
+ * - Send it to OpenAI Whisper (or any STT provider)
+ * - Return { text }
+ */
+// 🎯 NEW: Helper function for retrying transcription with different parameters
+async function attemptTranscription(
+  audioData: Uint8Array, 
+  mimeType: string, 
+  attempt: number = 1
+): Promise<{ text: string; confidence?: number }> {
+  const form = new FormData();
+  form.append("file", new Blob([audioData as BlobPart], { type: mimeType }), "audio.webm");
+  form.append("model", "whisper-1");
+  form.append("language", "en");
+  form.append("response_format", "verbose_json");
+
+  // 🎯 ENHANCED: Adjust parameters based on attempt number
+  if (attempt === 1) {
+    // First attempt: Most conservative settings
+    form.append("temperature", "0");
+    form.append("prompt", "This is a personal voice journal entry. The speaker may be reflecting on their day, thoughts, or experiences.");
+  } else if (attempt === 2) {
+    // Second attempt: Slightly more flexible
+    form.append("temperature", "0.2");
+    form.append("prompt", "Personal journal entry or diary recording.");
+  } else {
+    // Third attempt: Most flexible
+    form.append("temperature", "0.4");
+    // No prompt for maximum flexibility
+  }
+
+  const resp = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY.value()}` },
+    body: form,
+  });
+
+  const data = await resp.json();
+  
+  if (!resp.ok) {
+    throw new Error(data.error?.message || `HTTP ${resp.status}`);
+  }
+
+  return {
+    text: data.text ?? "",
+    confidence: data.segments?.length > 0 
+      ? data.segments.reduce((sum: number, seg: any) => sum + (seg.avg_logprob ?? -1), 0) / data.segments.length
+      : undefined
+  };
+}
+
+export const transcribeAudio = onCall(
+  {
+    secrets: [OPENAI_API_KEY],
+    timeoutSeconds: 540,
+    memory: "2GiB",
+    region: "us-central1",
+  },
+  async (request) => {
+    // Require a signed-in user
+    if (!request.auth) {
+      console.error("❌ Unauthenticated request");
+      throw new Error("Unauthenticated");
+    }
+
+    const { storagePath, mimeType } = request.data || {};
+    const userId = request.auth.uid;
+    
+    if (!storagePath || typeof storagePath !== "string") {
+      console.error("❌ Missing storagePath");
+      throw new Error("Missing storagePath");
+    }
+
+    try {
+      const bucket = admin.storage().bucket();
+      const file = bucket.file(storagePath);
+
+      // 🎯 NEW: Get file metadata for validation
+      const [metadata] = await file.getMetadata();
+      const fileSizeBytes = parseInt(String(metadata.size || '0'));
+      
+      // Validate file size
+      const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB Whisper limit
+      const MIN_FILE_SIZE = 1024; // 1KB minimum (very small files are likely empty)
+      
+      if (fileSizeBytes > MAX_FILE_SIZE) {
+        throw new Error(`File too large: ${Math.round(fileSizeBytes / 1024 / 1024)}MB exceeds 25MB limit`);
+      }
+      
+      if (fileSizeBytes < MIN_FILE_SIZE) {
+        throw new Error("File too small: Audio file appears to be empty or corrupted");
+      }
+
+      // Download the audio bytes from Storage
+      const [bytes] = await file.download(); // Buffer
+
+      // 🎯 NEW: Additional validation on downloaded data
+      if (bytes.length === 0) {
+        throw new Error("Downloaded audio file is empty");
+      }
+
+      console.log(`📊 Processing audio: ${Math.round(fileSizeBytes / 1024)}KB for user: ${userId}`);
+
+      // 🆕 SERVER-SIDE: Calculate authoritative audio duration
+      const authoritativeDurationSeconds = await getAudioDurationInSeconds(bytes, mimeType ?? "audio/webm");
+      const authoritativeMinutes = authoritativeDurationSeconds / 60;
+      
+      console.log(`📊 Authoritative duration: ${authoritativeMinutes.toFixed(2)} minutes`);
+      
+      // 🆕 SERVER-SIDE: Final quota check with authoritative duration using new enforcement system
+      await checkAndResetIfNewDay(userId);
+      
+      const userDoc = await admin.firestore().doc(`users/${userId}`).get();
+      const userData = userDoc.data();
+      const plan = (userData?.subscription?.plan || 'free') as 'free' | 'plus';
+      
+      const currentUsageSeconds = (userData?.dailyUsage?.speechMinutes || 0) * 60;
+      const authoritativeSeconds = authoritativeDurationSeconds;
+      
+      // 🆕 Use new enforcement system for precise server-side checking
+      const enforcement = checkSpeechEnforcement2(currentUsageSeconds, authoritativeSeconds, plan);
+      
+      if (enforcement.state === 'hard_over') {
+        // Calculate precise hours to reset
+        const minutesToReset = getMinutesUntilMidnightAEST();
+        const hoursToReset = Math.ceil(minutesToReset / 60);
+        console.log(`🚫 Quota exceeded for user ${userId}: ${enforcement.usedAfter}s / ${enforcement.hardLimitSec}s`);
+        throw new Error(`You've hit today's free limit. It resets in ${hoursToReset} hours. Upgrade to Echo Plus ($7/month) for higher limits`);
+      }
+      
+      // 🆕 Log analytics for buffer usage
+      if (enforcement.state === 'ok' && enforcement.usedAfter > (enforcement.hardLimitSec * 0.8)) {
+        console.log(`📊 User ${userId} approaching quota: ${enforcement.usedAfter}s / ${enforcement.hardLimitSec}s`);
+      }
+
+      // Normalize Buffer -> ArrayBuffer -> Uint8Array
+      const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      const u8 = new Uint8Array(ab);
+
+      // 🎯 ENHANCED: Retry transcription with different parameters for best results
+      let bestResult: { text: string; confidence?: number } | null = null;
+      let lastError: Error | null = null;
+      const maxAttempts = 3;
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          console.log(`🔄 Transcription attempt ${attempt}/${maxAttempts} for user: ${request.auth.uid}`);
+          
+          const result = await attemptTranscription(u8, mimeType ?? "audio/webm", attempt);
+          
+          // 🎯 NEW: Quality assessment of transcription result
+          const transcriptText = result.text;
+          const confidence = result.confidence;
+          
+          // Basic quality checks
+          const isGoodLength = transcriptText.length > 5 && transcriptText.length < 10000;
+          const hasAlphanumeric = /[a-zA-Z0-9]/.test(transcriptText);
+          const notAllSameChar = !(/^(.)\1*$/.test(transcriptText.replace(/\s/g, '')));
+          const noExcessiveRepeats = !(/(.{3,})\1{3,}/.test(transcriptText));
+          
+          // Confidence threshold (if available)
+          const hasGoodConfidence = confidence === undefined || confidence > -0.8;
+          
+          const isQualityResult = isGoodLength && hasAlphanumeric && notAllSameChar && noExcessiveRepeats && hasGoodConfidence;
+          
+          console.log(`📊 Attempt ${attempt} result: Length=${transcriptText.length}, Confidence=${confidence?.toFixed(3) ?? 'N/A'}, Quality=${isQualityResult}`);
+          
+          // If this is the best result so far (or first good result), keep it
+          if (isQualityResult && (bestResult === null || (confidence && bestResult.confidence && confidence > bestResult.confidence))) {
+            bestResult = result;
+            
+            // If we have a high-confidence result, we can stop early
+            if (confidence && confidence > -0.5) {
+              console.log(`✅ High-confidence result achieved on attempt ${attempt}, stopping early`);
+              break;
+            }
+          }
+          
+          // Always keep the result if we don't have anything better
+          if (bestResult === null) {
+            bestResult = result;
+          }
+          
+        } catch (error) {
+          console.error(`❌ Transcription attempt ${attempt} failed:`, error);
+          lastError = error instanceof Error ? error : new Error(String(error));
+          
+          // For rate limit errors, wait before retrying
+          if (error instanceof Error && error.message.includes('rate_limit')) {
+            const waitTime = Math.min(1000 * Math.pow(2, attempt - 1), 5000); // Exponential backoff, max 5s
+            console.log(`⏳ Rate limited, waiting ${waitTime}ms before retry`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+          }
+        }
+      }
+
+      // If all attempts failed, throw the last error
+      if (!bestResult) {
+        console.error("❌ All transcription attempts failed");
+        throw lastError || new Error("All transcription attempts failed");
+      }
+
+      const transcriptText = bestResult.text;
+      const confidence = bestResult.confidence;
+      
+      console.log(`📊 Final transcription selected with confidence: ${confidence?.toFixed(3) ?? 'N/A'}`);
+      console.log(`🐛 STEP 1 DEBUG: Processing text: "${transcriptText}" (length: ${transcriptText.length}, raw bytes: ${JSON.stringify([...transcriptText])})`);
+
+      // 🎯 STRUCTURED DEBUG: Log raw Whisper result
+      const raw = transcriptText.trim();
+
+      // Structured debug (safe by default: short preview only)
+      if (DEBUG_TRANSCRIBE) {
+        console.log(JSON.stringify({
+          stage: 'whisper_result',
+          len: raw.length,
+          preview: raw.slice(0, 160), // avoid logging full diary content
+        }));
+      }
+
+      // Run detector BEFORE any cleaning/normalizing
+      const hallu = detectHallucination(raw);
+
+      if (DEBUG_TRANSCRIBE) {
+        console.log(JSON.stringify({
+          stage: 'hallucination_check',
+          matched: hallu.matched,
+          rule: hallu.rule ?? null,
+        }));
+      }
+
+      // Gate with a strictness toggle so you can test without breaking prod
+      if (STRICT_HALLUCINATION_BLOCK && hallu.matched) {
+        // Keep the server honest—return an empty string and let the client decide what to show
+        return { text: '' };
+      }
+
+      // Skip the old comprehensive hallucination detection if we're in debug mode
+      if (!STRICT_HALLUCINATION_BLOCK) {
+        console.log('🎯 DEBUG MODE: Bypassing comprehensive hallucination detection');
+        // Always return the raw text (no fallback string here)
+        return { text: raw };
+      }
+      
+      // 🎯 COMPREHENSIVE: Extensive hallucination detection patterns
+      const suspiciousTexts = [
+        // Polite/Social phrases (including cough-induced variations)
+        "thank you", "thank you very much", "thanks", "thank you so much",
+        "thanks for watching", "thanks for listening", "thank you for watching",
+        "thank", "thankyou", "thank u", "ty", "thx",
+        "bye", "goodbye", "bye bye", "see you later", "see you soon",
+        "hello", "hi", "hey", "hey there", "hello there",
+        
+        // Video/Content creator phrases  
+        "subscribe", "like and subscribe", "please subscribe",
+        "thanks for watching this video", "hope you enjoyed",
+        "don't forget to subscribe", "hit the like button",
+        
+        // Filler words and short responses
+        "you", "um", "uh", "oh", "ah", "er", "hmm",
+        "yeah", "yes", "no", "okay", "ok", "right",
+        "well", "so", "and", "but", "the", "i", "a",
+        
+        // Audio descriptions
+        "music", "applause", "laughter", "silence", "noise",
+        "background music", "clapping", "laughing",
+        
+        // Foreign language common phrases
+        "bon appétit", "merci", "gracias", "danke",
+        
+        // Empty/punctuation only
+        "", " ", ".", "...", "?", "!", ",", ";", ":", "-"
+      ];
+      
+      // 🎯 COMPREHENSIVE: Multi-layered hallucination detection
+      const cleanText = transcriptText.toLowerCase().trim();
+      
+      // Enhanced text cleaning for better matching
+      const normalizedText = cleanText
+        .replace(/[^\w\s]/g, ' ')  // Replace punctuation with spaces
+        .replace(/\s+/g, ' ')      // Normalize multiple spaces
+        .trim();
+      
+      // 1. Direct suspicious phrase matching (check both original and normalized)
+      const isLikelySuspicious = suspiciousTexts.some(suspicious => 
+        cleanText.includes(suspicious.toLowerCase()) || 
+        normalizedText.includes(suspicious.toLowerCase())
+      );
+      
+      // 2. Pattern-based detection
+      const hasRepeatedPhrases = /(.{3,})\1{2,}/.test(transcriptText); // Repeated patterns
+      const isVeryShort = transcriptText.length < 20; // Too short to be meaningful
+      const isOnlyPunctuation = /^[\s\.,!?;:'"()-]*$/.test(transcriptText); // Only punctuation
+      
+      // 🎯 ENHANCED: Word-level repetition detection for typing/keyboard sounds
+      const hasRepeatedWords = (() => {
+        const words = cleanText.split(/\s+/).filter(w => w.length > 0);
+        if (words.length < 4) return false;
+        
+        // Check for repetitive word patterns
+        const wordCounts: Record<string, number> = {};
+        words.forEach(word => {
+          wordCounts[word] = (wordCounts[word] || 0) + 1;
+        });
+        
+        // If same word appears 3+ times in a short text, likely repetitive
+        const hasExcessiveRepeats = Object.values(wordCounts).some((count: number) => count >= 3);
+        
+        // Check for alternating patterns like "and an and an"
+        let alternatingPattern = false;
+        for (let i = 0; i < words.length - 3; i++) {
+          if (words[i] === words[i + 2] && words[i + 1] === words[i + 3]) {
+            alternatingPattern = true;
+            break;
+          }
+        }
+        
+        return hasExcessiveRepeats || alternatingPattern;
+      })();
+      
+      // 🎯 ENHANCED: Filler word dominance (common in keyboard/typing hallucinations)
+      const hasExcessiveFillers = (() => {
+        const fillerWords = ['and', 'an', 'the', 'a', 'to', 'of', 'in', 'that', 'is', 'it', 'on', 'be', 'at'];
+        const words = cleanText.split(/\s+/).filter(w => w.length > 0);
+        if (words.length < 3) return false;
+        
+        const fillerCount = words.filter(word => fillerWords.includes(word.toLowerCase())).length;
+        const fillerRatio = fillerCount / words.length;
+        
+        // If 80%+ of words are fillers, likely hallucination
+        return fillerRatio >= 0.8;
+      })();
+      
+      // 🎯 ENHANCED: Incomplete word detection (like "th" from "the")
+      const hasIncompleteWords = /\b[a-z]{1,2}\b/g.test(cleanText) && cleanText.length < 50;
+      
+      // 3. Advanced hallucination patterns
+      const isOnlyCommonWords = /^(you|i|the|a|an|and|or|but|so|well|um|uh|oh|ah|yes|no|okay|ok|right)\s*[\.!?]*$/i.test(cleanText);
+      const hasExcessivePoliteness = /(thank|thanks|please|sorry).*(thank|thanks|please|sorry)/i.test(cleanText);
+      const isGenericGreeting = /^(hello|hi|hey)(\s+(there|everyone|guys?))?[\.!?]*$/i.test(cleanText);
+      const isGenericFarewell = /^(bye|goodbye|see you)(\s+(later|soon|tomorrow))?[\.!?]*$/i.test(cleanText);
+      
+      // 🎯 NEW: Counting sequence detection (catches number sequences like "5, 6, 7, 8...")
+      const hasCountingSequence = /\b\d+[,.\s]*\d+[,.\s]*\d+/g.test(cleanText); // 3+ consecutive numbers
+      const isOnlyNumbers = /^[\d\s,.\-]*$/.test(cleanText); // Only numbers and punctuation
+      const hasSequentialNumbers = (() => {
+        const numbers = cleanText.match(/\b\d+\b/g);
+        if (!numbers || numbers.length < 3) return false;
+        
+        // Check if numbers form a sequence (ascending or descending)
+        const numArray = numbers.map(n => parseInt(n)).slice(0, 10); // Limit check to first 10 numbers
+        let isSequential = true;
+        
+        for (let i = 1; i < numArray.length; i++) {
+          const diff = numArray[i] - numArray[i-1];
+          if (Math.abs(diff) !== 1) {
+            isSequential = false;
+            break;
+          }
+        }
+        return isSequential;
+      })();
+      
+      // 4. Content creator specific patterns
+      const hasCreatorPhrases = /(subscribe|like|watch|video|channel|comment|bell|notification)/i.test(cleanText);
+      const hasVideoEnding = /(watching|listening).*?(video|content|show)/i.test(cleanText);
+      
+      // 5. Low confidence with suspicious characteristics
+      const isLowConfidenceAndSuspicious = (confidence !== undefined && confidence < -0.6) && 
+        (isVeryShort || isOnlyCommonWords || hasCreatorPhrases);
+      
+      // Combine all detection methods
+      const isHallucination = isLikelySuspicious || hasRepeatedPhrases || isOnlyPunctuation || 
+        isOnlyCommonWords || hasExcessivePoliteness || isGenericGreeting || 
+        isGenericFarewell || hasCreatorPhrases || hasVideoEnding || isLowConfidenceAndSuspicious ||
+        hasCountingSequence || isOnlyNumbers || hasSequentialNumbers || // Number sequence detection
+        hasRepeatedWords || hasExcessiveFillers || hasIncompleteWords; // 🎯 NEW: Typing/keyboard hallucination detection
+      
+      // 🎯 COMPREHENSIVE: Single check for all hallucination types
+      if (isHallucination) {
+        console.log(`⚠️ Hallucination detected: "${transcriptText}" - Confidence: ${confidence?.toFixed(3) ?? 'N/A'}`);
+        
+        // Provide specific feedback based on detection type
+        // 🎯 PRIORITY 1: Specific hallucination patterns (most important)
+        if (isLikelySuspicious) {
+          return { text: "🎤 No clear speech detected. Please try speaking more clearly into the microphone." };
+        } else if (hasRepeatedPhrases || hasRepeatedWords || hasExcessiveFillers || hasIncompleteWords) {
+          return { text: "No clear speech detected. Please record your own voice clearly." };
+        } else if (isOnlyPunctuation) {
+          return { text: "No clear speech detected. Please record your own voice clearly." };
+        } else if (hasCountingSequence || isOnlyNumbers || hasSequentialNumbers) {
+          return { text: "No clear speech detected. Please record your own voice clearly." };
+        } else if (hasCreatorPhrases || hasVideoEnding) {
+          return { text: "🎤 No clear speech detected. Please record your own voice clearly." };
+        } else if (isVeryShort) {
+          return { text: "🎤 Recording too brief. Please speak for a longer duration for better accuracy." };
+        } else {
+          return { text: "🎤 No clear speech detected. Please try speaking more clearly into the microphone." };
+        }
+      }
+
+      // 🎯 NEW: Post-process text for better readability
+      let cleanedText = transcriptText
+        .replace(/\s+/g, ' ')           // Normalize whitespace
+        .replace(/([.!?])\s*([a-z])/g, '$1 $2') // Ensure space after sentence endings
+        .trim();
+      
+      // Capitalize first letter if not already
+      if (cleanedText.length > 0 && cleanedText[0] !== cleanedText[0].toUpperCase()) {
+        cleanedText = cleanedText[0].toUpperCase() + cleanedText.slice(1);
+      }
+      
+      // Ensure proper sentence ending
+      if (cleanedText.length > 0 && !'.!?'.includes(cleanedText[cleanedText.length - 1])) {
+        cleanedText += '.';
+      }
+
+      // 🆕 Bill based on AUTHORITATIVE duration, only if successful and not hallucination
+      if (!isHallucination) {
+        await admin.firestore().doc(`users/${userId}`).update({
+          'dailyUsage.speechMinutes': admin.firestore.FieldValue.increment(authoritativeMinutes),
+          'totalSpeechMinutes': admin.firestore.FieldValue.increment(authoritativeMinutes),
+          'lastActive': admin.firestore.FieldValue.serverTimestamp()
+        });
+        
+        console.log(`✅ Billed ${authoritativeMinutes.toFixed(2)} minutes to user ${userId}`);
+      } else {
+        console.log(`🚫 Hallucination detected - no billing for user ${userId}`);
+      }
+
+      // Return transcript to the client
+      console.log(`✅ Transcription successful for user: ${userId} - Result: "${cleanedText.substring(0, 50)}..."`);
+      return { text: cleanedText };
+    } catch (error) {
+      console.error("❌ Function error:", error);
+      throw error;
+    }
+  }
+);

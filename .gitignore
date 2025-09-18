@@ -1,0 +1,30 @@
+# node / build
+node_modules/
+functions/node_modules/
+dist/
+build/
+coverage/
+.tmp/
+.temp/
+*.log
+
+# firebase emulator
+firebase-debug.log
+firebase-debug.*.log
+
+# env & local
+.env
+.env.*
+!.env.example
+*.local
+
+# TypeScript outputs (if any)
+functions/lib/
+lib/
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json

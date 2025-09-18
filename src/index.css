@@ -1,0 +1,67 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+    font-weight: 400;
+    color-scheme: light dark;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+  }
+
+  #root {
+    width: 100%;
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply px-4 py-2 rounded-lg font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2;
+  }
+
+  .btn-primary {
+    @apply bg-primary-600 text-white hover:bg-primary-700 focus:ring-primary-500;
+  }
+
+  .btn-secondary {
+    @apply bg-secondary-200 text-secondary-800 hover:bg-secondary-300 focus:ring-secondary-500;
+  }
+
+  .card {
+    @apply bg-white dark:bg-secondary-800 rounded-lg shadow-sm border border-secondary-200 dark:border-secondary-700 p-6;
+  }
+
+  .input {
+    @apply w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white;
+  }
+
+  .mesh-bg {
+    background:
+      radial-gradient(1200px 800px at 15% 22%, #8B5CF6 0%, rgba(139,92,246,0.6) 25%, rgba(139,92,246,0.3) 50%, transparent 100%),
+      radial-gradient(1100px 700px at 48% 15%, #FF6B9D 0%, rgba(255,107,157,0.7) 30%, rgba(255,107,157,0.4) 55%, transparent 100%),
+      radial-gradient(1200px 750px at 86% 32%, #10B981 0%, rgba(16,185,129,0.6) 30%, rgba(16,185,129,0.3) 55%, transparent 100%),
+      radial-gradient(1000px 600px at 70% 82%, #3B82F6 0%, rgba(59,130,246,0.5) 25%, rgba(59,130,246,0.2) 50%, transparent 100%),
+      radial-gradient(900px 600px at 24% 80%, #F59E0B 0%, rgba(245,158,11,0.6) 25%, rgba(245,158,11,0.3) 50%, transparent 95%),
+      #1a1a2e;
+    background-repeat: no-repeat;
+    background-size: cover;
+  }
+}

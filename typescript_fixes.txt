@@ -1,0 +1,15 @@
+🛠️ TYPESCRIPT FIXES NEEDED
+
+Fix 1: Line 27 - Change Uint8Array type
+FIND: form.append("file", new Blob([audioData], { type: mimeType }), "audio.webm");
+REPLACE: form.append("file", new Blob([audioData.buffer], { type: mimeType }), "audio.webm");
+
+Fix 2: Line 247 - Add type annotation
+FIND: const wordCounts = {};
+REPLACE: const wordCounts: Record<string, number> = {};
+
+Fix 3: Line 253 - Add type assertion
+FIND: const hasExcessiveRepeats = Object.values(wordCounts).some(count => count >= 3);
+REPLACE: const hasExcessiveRepeats = Object.values(wordCounts).some((count: number) => count >= 3);
+
+These fixes will resolve the TypeScript compilation errors.
