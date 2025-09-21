@@ -1,22 +1,40 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+
     function signedIn() { return request.auth != null; }
+
     function isImageOrVideo() {
       return request.resource != null
-             && (request.resource.contentType.matches('image/.*')
-                 || request.resource.contentType.matches('video/.*'));
-    }
-    function isUnderMaxSize() {
-      return request.resource.size < 500 * 1024 * 1024; // 500MB
+        && (request.resource.contentType.matches('image/.*')
+         || request.resource.contentType.matches('video/.*'));
     }
 
+    // ✅ allow audio MIME types
+    function isAudio() {
+      return request.resource != null
+        && request.resource.contentType.matches('audio/.*');
+    }
+
+    function isUnderMaxSize()  { return request.resource.size < 500 * 1024 * 1024; }
+    function isUnderMaxAudio() { return request.resource.size < 50  * 1024 * 1024; }
+
+    // Images/videos anywhere under the user's tree
     match /users/{uid}/{allPaths=**} {
       allow read, list: if signedIn() && request.auth.uid == uid;
       allow write: if signedIn()
-                   && request.auth.uid == uid
-                   && isImageOrVideo()
-                   && isUnderMaxSize();
+                && request.auth.uid == uid
+                && isImageOrVideo()
+                && isUnderMaxSize();
+    }
+
+    // ✅ Audio allowed only under stt/**
+    match /users/{uid}/stt/{allPaths=**} {
+      allow read, list: if signedIn() && request.auth.uid == uid;
+      allow write: if signedIn()
+                && request.auth.uid == uid
+                && isAudio()
+                && isUnderMaxAudio();
     }
   }
 }

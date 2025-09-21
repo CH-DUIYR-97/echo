@@ -4,6 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "emu": "firebase emulators:start --only auth,firestore,storage --project demo-echo",
+    "emu:all": "firebase emulators:start --project demo-echo",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
