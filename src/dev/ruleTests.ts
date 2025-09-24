@@ -176,3 +176,12 @@ export async function testAudioDeniedNoMime() {
     return `✅ denied as expected: ${e.code || e.message}`;
   }
 }
+
+// ✅ DEV helper to verify the seed exists using the same app + bundler context
+export async function verifySttSeed() {
+    const uid = auth.currentUser?.uid ?? await ensureUser('alice@test.dev');
+    const path = `users/${uid}/posts/p1/stt/t1`;
+    const snap = await getDoc(doc(db, path));
+    console.log(path, 'exists?', snap.exists());
+    return snap.exists();
+  }
