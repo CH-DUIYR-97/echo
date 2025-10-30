@@ -64,4 +64,20 @@
     background-repeat: no-repeat;
     background-size: cover;
   }
+
+  @keyframes slide-down {
+    from {
+      opacity: 0;
+      transform: translateX(var(--tw-translate-x, -50%)) translateY(-20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(var(--tw-translate-x, -50%)) translateY(0);
+    }
+  }
+
+  .animate-slide-down {
+    animation: slide-down 0.25cs cubic-bezier(.2, .8, .2, 1) both; 
+    will-change: transform, opactiy; 
+  }
 }

@@ -51,14 +51,24 @@ async function sttDocExists(uid: string, postId: string, sttId: string) {
   return snap.exists();
 }
 
+// Call getUsage and print the result (auto sign-in if needed)
+export async function callGetUsage() {
+    if (!auth.currentUser) {
+      await ensureUser('alice@test.dev');
+    }
+    const { functions } = await import('../lib/firebase');
+    const { httpsCallable } = await import('firebase/functions');
+    const res = await httpsCallable(functions, 'getUsage')();
+    console.log('[getUsage]', res.data);
+    return res.data;
+  }
+
 // ---------- main test runner ----------
 
 export async function runAll() {
-  const aliceUid = await ensureUser('alice@test.dev');
   const bobUid   = await ensureUser('bob@test.dev');
-
-  // Make sure subsequent ops run as Alice
-  await ensureUser('alice@test.dev');
+  const aliceUid = await ensureUser('alice@test.dev');
+  
 
   const postId = 'p1';
   const sttId  = 't1';

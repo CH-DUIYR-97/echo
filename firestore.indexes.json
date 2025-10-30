@@ -6,6 +6,14 @@
       "fields": [
         { "fieldPath": "meta.createdAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "posts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "flags.archived", "order": "ASCENDING" },
+        { "fieldPath": "meta.createdAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

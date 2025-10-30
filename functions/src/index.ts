@@ -1,492 +1,469 @@
-// functions/src/index.js
-import { onCall } from "firebase-functions/v2/https";
-import { defineSecret } from "firebase-functions/params";
-import { setGlobalOptions } from "firebase-functions";
-import * as admin from "firebase-admin";
-import { getAudioDurationInSeconds, getMinutesUntilMidnightAEST, checkAndResetIfNewDay, checkSpeechEnforcement2 } from "./audioUtils";
+// functions/src/index.ts
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { logger } from 'firebase-functions';
+import { db, storage, FieldValue } from './admin';
 
-setGlobalOptions({ maxInstances: 10 });
-admin.initializeApp();
+const REGION = 'australia-southeast1';
 
-// Grab the OpenAI key from Functions secrets (set this below)
-const OPENAI_API_KEY = defineSecret("OPENAI_API_KEY");
+// ── STT guardrails ────────────────────────────────────────────────────────────
+const MAX_STT_SECONDS = 1200;                 // 20 minutes
+const MAX_AUDIO_BYTES = 25 * 1024 * 1024;     // 25 MB
 
-// 🎯 DEBUG TOGGLES: Environment-based configuration
+// 🎯 DEBUG TOGGLES
 const DEBUG_TRANSCRIBE = process.env.ECHO_DEBUG_TRANSCRIBE === '1';
-const STRICT_HALLUCINATION_BLOCK = process.env.ECHO_HALLUCINATION_STRICT === '1';
-// In prod: STRICT=true, DEBUG=false. In dev: STRICT=false, DEBUG=true
+const STRICT_HALLUCINATION_BLOCK = process.env.ECHO_HALLUCINATION_STRICT === '1'; // prod: true
 
-// 🎯 CONSERVATIVE HALLUCINATION DETECTION: Only block obvious garbage
-function detectHallucination(raw: string) {
-  // Keep this conservative; log which rule matched.
+// ── UX messages (module scope) ────────────────────────────────────────────────
+const MSG_TOO_BRIEF =
+  '🎤 Recording too brief. Please speak for a longer duration for better accuracy.';
+const MSG_NO_SPEECH =
+  '🎤 No clear speech detected. Please try again.';
+
+// ── STT constants (module scope) ──────────────────────────────────────────────
+const MAX_TEXT_CHARS = 8000;
+const ALLOWED_BASE = new Set([
+  'audio/webm','audio/ogg','audio/mpeg','audio/wav','audio/x-wav','audio/mp4','audio/m4a'
+]);
+
+// ── Hallucination heuristics (HOISTED) ────────────────────────────────────────
+const EXACT_SHORT_PHRASES = new Set([
+  'thank you','thanks','thanks for watching','hello','hi','hey',
+  'bye','goodbye','ok','okay','yes','no','like and subscribe','subscribe'
+]);
+
+const TOKEN_SUSPECTS = new Set([
+  'um','uh','hmm','er','ah','you','the','a','i','ok','okay','yeah','yes','no'
+]);
+
+const CREATOR_PATTERNS = [
+  /\blike and subscribe\b/i,
+  /\bplease subscribe\b/i,
+  /\bdon'?t forget to (?:subscribe|like)\b/i,
+  /\bhit the (?:like|subscribe|bell)\b/i,
+  /\bthanks for (?:watching|listening)\b/i,
+];
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function sanitizeBase64(s: string): string {
+  if (!s) return s;
+  const i = s.indexOf(',');
+  return s.startsWith('data:') && i > 0 ? s.slice(i + 1) : s;
+}
+
+// Conservative detector
+function detectHallucination(raw: string): { matched: boolean; rule?: string } {
   if (!raw || raw.trim().length === 0) return { matched: true, rule: 'empty' };
-
   const normalized = raw.trim();
 
-  // "garbage only" (punctuation/emoji) & super short
   if (/^[\W_]+$/.test(normalized) && normalized.length < 6) {
     return { matched: true, rule: 'nonverbal_garbage' };
   }
-
-  // Common placeholder labels from some models
   if (/\b(inaudible|music|background noise)\b/i.test(normalized)) {
     return { matched: true, rule: 'placeholder_label' };
   }
-
-  // If it looks like a timestamp transcript only
   if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(normalized)) {
     return { matched: true, rule: 'timestamp_only' };
   }
-
-  // Heuristic: if it has at least 1 letter and length ≥ 4, let it pass.
-  // (Prevents false positives on short real words like "Yep.")
-  if (/[A-Za-z]/.test(normalized) && normalized.length >= 4) {
+  // Allow short valid tokens like "yep"/"ok"/"sure" — but not alpha soup
+  if (/[A-Za-z]/.test(normalized) && normalized.length >= 3 && !/^[a-z]{3,}$/.test(normalized)) {
     return { matched: false };
   }
-
-  // Default: don't block
   return { matched: false };
 }
 
-/**
- * Callable function:
- * Frontend passes { storagePath, mimeType }
- * - We download the audio from Firebase Storage
- * - Send it to OpenAI Whisper (or any STT provider)
- * - Return { text }
- */
-// 🎯 NEW: Helper function for retrying transcription with different parameters
-async function attemptTranscription(
-  audioData: Uint8Array, 
-  mimeType: string, 
-  attempt: number = 1
-): Promise<{ text: string; confidence?: number }> {
-  const form = new FormData();
-  form.append("file", new Blob([audioData as BlobPart], { type: mimeType }), "audio.webm");
-  form.append("model", "whisper-1");
-  form.append("language", "en");
-  form.append("response_format", "verbose_json");
-
-  // 🎯 ENHANCED: Adjust parameters based on attempt number
-  if (attempt === 1) {
-    // First attempt: Most conservative settings
-    form.append("temperature", "0");
-    form.append("prompt", "This is a personal voice journal entry. The speaker may be reflecting on their day, thoughts, or experiences.");
-  } else if (attempt === 2) {
-    // Second attempt: Slightly more flexible
-    form.append("temperature", "0.2");
-    form.append("prompt", "Personal journal entry or diary recording.");
-  } else {
-    // Third attempt: Most flexible
-    form.append("temperature", "0.4");
-    // No prompt for maximum flexibility
+// Accept only simple, sluggy IDs
+const POST_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+function assertValidPostId(postId: string): void {
+  if (!POST_ID_RE.test(postId)) {
+    throw new HttpsError('invalid-argument', 'Invalid postId format.');
   }
+}
 
-  const resp = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${OPENAI_API_KEY.value()}` },
-    body: form,
-  });
+function scoreTranscript(text: string, durSec: number) {
+  const t = text.trim();
+  const chars = t.length;
+  const wordsArr = t.toLowerCase().split(/\s+/).filter(Boolean);
+  const unique = new Set(wordsArr);
+  const cps = durSec > 0 ? chars / durSec : chars;
+  const wpm = durSec > 0 ? (wordsArr.length / durSec) * 60 : wordsArr.length;
+  const uniqueRatio = wordsArr.length ? unique.size / wordsArr.length : 0;
 
-  const data = await resp.json();
-  
-  if (!resp.ok) {
-    throw new Error(data.error?.message || `HTTP ${resp.status}`);
-  }
+  const freq: Record<string, number> = {};
+  for (const c of t) freq[c] = (freq[c] || 0) + 1;
+  const H = Object.values(freq).reduce((acc, n) => {
+    const p = n / Math.max(1, chars);
+    return acc - p * Math.log2(p);
+  }, 0);
+
+  const onlyPunct = /^[\s\.,!?;:'"()\-\u2013\u2014]*$/.test(t);
+  const veryShort = chars < 8 && wordsArr.length < 2;
+  const repeatedChunk = /(.{3,})\1{2,}/.test(t);
+  const repeatedWords = (() => {
+    const counts: Record<string, number> = {};
+    for (const w of wordsArr) counts[w] = (counts[w] || 0) + 1;
+    return Object.values(counts).some(c => c > Math.max(3, wordsArr.length * 0.6));
+  })();
+
+  let score = 0;
+  if (onlyPunct) score += 4;
+  if (veryShort) score += 2;
+  if (repeatedChunk) score += 3;
+  if (repeatedWords) score += 2;
+  if (cps < 1.2 && durSec >= 5) score += 2;
+  if (cps > 28) score += 2;
+  if (wpm < 40 && durSec >= 8) score += 1;
+  if (uniqueRatio < 0.3 && wordsArr.length >= 10) score += 2;
+  if (H < 2.2 && chars >= 30) score += 2;
 
   return {
-    text: data.text ?? "",
-    confidence: data.segments?.length > 0 
-      ? data.segments.reduce((sum: number, seg: any) => sum + (seg.avg_logprob ?? -1), 0) / data.segments.length
-      : undefined
+    score,
+    cps: +cps.toFixed(1),
+    wpm: +wpm.toFixed(0),
+    uniqueRatio: +uniqueRatio.toFixed(2),
+    H: +H.toFixed(2)
   };
 }
 
-export const transcribeAudio = onCall(
-  {
-    secrets: [OPENAI_API_KEY],
-    timeoutSeconds: 540,
-    memory: "2GiB",
-    region: "us-central1",
-  },
-  async (request) => {
-    // Require a signed-in user
-    if (!request.auth) {
-      console.error("❌ Unauthenticated request");
-      throw new Error("Unauthenticated");
+// ── Types ─────────────────────────────────────────────────────────────────────
+interface CreateMemoryPostInput { postId: string; contentText: string; }
+interface CreateMemoryPostResult { postId: string; uploadedBytesForThisPost: number; }
+interface DeletePostInput { postId: string; }
+interface DeletePostResult { ok: boolean; deletedFiles: number; }
+interface TranscribeAudioInput { audioBase64: string; durationSec: number; mimeType?: string; }
+interface TranscribeAudioResult { text: string; durationSec: number; }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// createMemoryPost — finalize callable (SIMPLIFIED - NO USAGE TRACKING)
+// ═══════════════════════════════════════════════════════════════════════════════
+export const createMemoryPost = onCall(
+  { region: REGION },
+  async (request): Promise<CreateMemoryPostResult> => {
+    const uid = request.auth?.uid;
+    if (!uid) throw new HttpsError('unauthenticated', 'Sign in required');
+
+    const { postId, contentText } = (request.data ?? {}) as Partial<CreateMemoryPostInput>;
+    if (!postId || typeof postId !== 'string') {
+      throw new HttpsError('invalid-argument', 'postId (string) is required');
+    }
+    assertValidPostId(postId);
+
+    if (typeof contentText !== 'string') {
+      throw new HttpsError('invalid-argument', 'contentText (string) is required');
     }
 
-    const { storagePath, mimeType } = request.data || {};
-    const userId = request.auth.uid;
-    
-    if (!storagePath || typeof storagePath !== "string") {
-      console.error("❌ Missing storagePath");
-      throw new Error("Missing storagePath");
+    // 1) List storage objects under the post
+    const bucket = storage.bucket();
+    const base = `users/${uid}/posts/${postId}`;
+    let files: Array<import('@google-cloud/storage').File> = [];
+    try {
+      const [images] = await bucket.getFiles({ prefix: `${base}/images/` });
+      files = images; // Only images now
+    } catch (e) {
+      logger.error('Storage list failed', { uid, postId, err: String(e) });
+      throw new HttpsError('internal', 'STORAGE_LIST_FAILED');
     }
+
+    // 2) Build media[] with sizes from metadata
+    const media = await Promise.all(
+      files.map(async (f) => {
+        const [meta] = await f.getMetadata();
+        const size = Number(meta.size ?? 0);
+        const contentType = String(meta.contentType ?? '');
+        if (!contentType.startsWith('image/')) {
+          throw new HttpsError('failed-precondition', 'Only images allowed.');
+        }
+        return {
+          id: f.name.split('/').pop() ?? f.name,
+          kind: 'image' as const,
+          path: f.name,
+          size,
+          contentType,
+        };
+      })
+    );
+
+    const totalBytes = media.reduce((sum, m) => sum + (m.size || 0), 0);
+
+    // 3) Validate: max 5 images
+    if (media.length > 5) {
+      throw new HttpsError('failed-precondition', 'Max 5 images allowed.');
+    }
+
+    const content = (contentText ?? '').trim();
+
+    // 4) Guard: empty post
+    if (totalBytes === 0 && content === '') {
+      throw new HttpsError('invalid-argument', 'EMPTY_POST');
+    }
+
+    // 5) Write post (no usage tracking, no limits)
+    await db.runTransaction(async (tx) => {
+      const postRef = db.collection('users').doc(uid).collection('posts').doc(postId);
+
+      // Idempotency: if post exists, don't double-count
+      const postSnap = await tx.get(postRef);
+      if (postSnap.exists) {
+        throw new HttpsError('already-exists', 'Post already exists');
+      }
+
+      tx.set(postRef, {
+        userId: uid,
+        meta: {
+          createdAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        content: { text: content },
+        media,
+        usage: { uploadedBytes: totalBytes }, // analytics only
+        flags: { archived: false },
+      });
+    });
+
+    logger.info('createMemoryPost: success', { uid, postId, mediaCount: media.length, bytes: totalBytes });
+    return { postId, uploadedBytesForThisPost: totalBytes };
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// deletePost — delete callable
+// ═══════════════════════════════════════════════════════════════════════════════
+export const deletePost = onCall(
+  { region: REGION, timeoutSeconds: 120, memory: '512MiB' },
+  async (request): Promise<DeletePostResult> => {
+    const uid = request.auth?.uid;
+    if (!uid) throw new HttpsError('unauthenticated', 'Sign in required');
+
+    const { postId } = (request.data ?? {}) as Partial<DeletePostInput>;
+    if (typeof postId !== 'string' || !postId) {
+      throw new HttpsError('invalid-argument', 'postId (string) is required');
+    }
+    assertValidPostId(postId);
+
+    // Verify ownership
+    const postRef = db.collection('users').doc(uid).collection('posts').doc(postId);
+    const postSnap = await postRef.get();
+
+    if (!postSnap.exists) {
+      throw new HttpsError('not-found', 'Post not found');
+    }
+    const postUserId = postSnap.get('userId');
+    if (postUserId !== uid) {
+      throw new HttpsError('permission-denied', 'Not your post');
+    }
+
+    // Delete Storage folder
+    const bucket = storage.bucket();
+    const prefix = `users/${uid}/posts/${postId}/`;
+    let deletedFiles = 0;
+    const MAX_CONCURRENT = 20;
 
     try {
-      const bucket = admin.storage().bucket();
-      const file = bucket.file(storagePath);
+      const [allFiles] = await bucket.getFiles({ prefix });
+      logger.info('deletePost: found files', { uid, postId, count: allFiles.length });
 
-      // 🎯 NEW: Get file metadata for validation
-      const [metadata] = await file.getMetadata();
-      const fileSizeBytes = parseInt(String(metadata.size || '0'));
-      
-      // Validate file size
-      const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB Whisper limit
-      const MIN_FILE_SIZE = 1024; // 1KB minimum (very small files are likely empty)
-      
-      if (fileSizeBytes > MAX_FILE_SIZE) {
-        throw new Error(`File too large: ${Math.round(fileSizeBytes / 1024 / 1024)}MB exceeds 25MB limit`);
-      }
-      
-      if (fileSizeBytes < MIN_FILE_SIZE) {
-        throw new Error("File too small: Audio file appears to be empty or corrupted");
-      }
-
-      // Download the audio bytes from Storage
-      const [bytes] = await file.download(); // Buffer
-
-      // 🎯 NEW: Additional validation on downloaded data
-      if (bytes.length === 0) {
-        throw new Error("Downloaded audio file is empty");
-      }
-
-      console.log(`📊 Processing audio: ${Math.round(fileSizeBytes / 1024)}KB for user: ${userId}`);
-
-      // 🆕 SERVER-SIDE: Calculate authoritative audio duration
-      const authoritativeDurationSeconds = await getAudioDurationInSeconds(bytes, mimeType ?? "audio/webm");
-      const authoritativeMinutes = authoritativeDurationSeconds / 60;
-      
-      console.log(`📊 Authoritative duration: ${authoritativeMinutes.toFixed(2)} minutes`);
-      
-      // 🆕 SERVER-SIDE: Final quota check with authoritative duration using new enforcement system
-      await checkAndResetIfNewDay(userId);
-      
-      const userDoc = await admin.firestore().doc(`users/${userId}`).get();
-      const userData = userDoc.data();
-      const plan = (userData?.subscription?.plan || 'free') as 'free' | 'plus';
-      
-      const currentUsageSeconds = (userData?.dailyUsage?.speechMinutes || 0) * 60;
-      const authoritativeSeconds = authoritativeDurationSeconds;
-      
-      // 🆕 Use new enforcement system for precise server-side checking
-      const enforcement = checkSpeechEnforcement2(currentUsageSeconds, authoritativeSeconds, plan);
-      
-      if (enforcement.state === 'hard_over') {
-        // Calculate precise hours to reset
-        const minutesToReset = getMinutesUntilMidnightAEST();
-        const hoursToReset = Math.ceil(minutesToReset / 60);
-        console.log(`🚫 Quota exceeded for user ${userId}: ${enforcement.usedAfter}s / ${enforcement.hardLimitSec}s`);
-        throw new Error(`You've hit today's free limit. It resets in ${hoursToReset} hours. Upgrade to Echo Plus ($7/month) for higher limits`);
-      }
-      
-      // 🆕 Log analytics for buffer usage
-      if (enforcement.state === 'ok' && enforcement.usedAfter > (enforcement.hardLimitSec * 0.8)) {
-        console.log(`📊 User ${userId} approaching quota: ${enforcement.usedAfter}s / ${enforcement.hardLimitSec}s`);
-      }
-
-      // Normalize Buffer -> ArrayBuffer -> Uint8Array
-      const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-      const u8 = new Uint8Array(ab);
-
-      // 🎯 ENHANCED: Retry transcription with different parameters for best results
-      let bestResult: { text: string; confidence?: number } | null = null;
-      let lastError: Error | null = null;
-      const maxAttempts = 3;
-
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        try {
-          console.log(`🔄 Transcription attempt ${attempt}/${maxAttempts} for user: ${request.auth.uid}`);
-          
-          const result = await attemptTranscription(u8, mimeType ?? "audio/webm", attempt);
-          
-          // 🎯 NEW: Quality assessment of transcription result
-          const transcriptText = result.text;
-          const confidence = result.confidence;
-          
-          // Basic quality checks
-          const isGoodLength = transcriptText.length > 5 && transcriptText.length < 10000;
-          const hasAlphanumeric = /[a-zA-Z0-9]/.test(transcriptText);
-          const notAllSameChar = !(/^(.)\1*$/.test(transcriptText.replace(/\s/g, '')));
-          const noExcessiveRepeats = !(/(.{3,})\1{3,}/.test(transcriptText));
-          
-          // Confidence threshold (if available)
-          const hasGoodConfidence = confidence === undefined || confidence > -0.8;
-          
-          const isQualityResult = isGoodLength && hasAlphanumeric && notAllSameChar && noExcessiveRepeats && hasGoodConfidence;
-          
-          console.log(`📊 Attempt ${attempt} result: Length=${transcriptText.length}, Confidence=${confidence?.toFixed(3) ?? 'N/A'}, Quality=${isQualityResult}`);
-          
-          // If this is the best result so far (or first good result), keep it
-          if (isQualityResult && (bestResult === null || (confidence && bestResult.confidence && confidence > bestResult.confidence))) {
-            bestResult = result;
-            
-            // If we have a high-confidence result, we can stop early
-            if (confidence && confidence > -0.5) {
-              console.log(`✅ High-confidence result achieved on attempt ${attempt}, stopping early`);
-              break;
-            }
+      for (let i = 0; i < allFiles.length; i += MAX_CONCURRENT) {
+        const batch = allFiles.slice(i, i + MAX_CONCURRENT);
+        const results = await Promise.allSettled(batch.map(f => f.delete({ ignoreNotFound: true })));
+        results.forEach((r, idx) => {
+          if (r.status === 'fulfilled') {
+            deletedFiles++;
+          } else if (r.reason?.code !== 404) {
+            logger.warn('deletePost: file delete failed', {
+              uid, postId, file: batch[idx].name, err: String(r.reason)
+            });
+            throw new HttpsError('internal', 'STORAGE_DELETE_FAILED');
           }
-          
-          // Always keep the result if we don't have anything better
-          if (bestResult === null) {
-            bestResult = result;
-          }
-          
-        } catch (error) {
-          console.error(`❌ Transcription attempt ${attempt} failed:`, error);
-          lastError = error instanceof Error ? error : new Error(String(error));
-          
-          // For rate limit errors, wait before retrying
-          if (error instanceof Error && error.message.includes('rate_limit')) {
-            const waitTime = Math.min(1000 * Math.pow(2, attempt - 1), 5000); // Exponential backoff, max 5s
-            console.log(`⏳ Rate limited, waiting ${waitTime}ms before retry`);
-            await new Promise(resolve => setTimeout(resolve, waitTime));
-          }
-        }
-      }
-
-      // If all attempts failed, throw the last error
-      if (!bestResult) {
-        console.error("❌ All transcription attempts failed");
-        throw lastError || new Error("All transcription attempts failed");
-      }
-
-      const transcriptText = bestResult.text;
-      const confidence = bestResult.confidence;
-      
-      console.log(`📊 Final transcription selected with confidence: ${confidence?.toFixed(3) ?? 'N/A'}`);
-      console.log(`🐛 STEP 1 DEBUG: Processing text: "${transcriptText}" (length: ${transcriptText.length}, raw bytes: ${JSON.stringify([...transcriptText])})`);
-
-      // 🎯 STRUCTURED DEBUG: Log raw Whisper result
-      const raw = transcriptText.trim();
-
-      // Structured debug (safe by default: short preview only)
-      if (DEBUG_TRANSCRIBE) {
-        console.log(JSON.stringify({
-          stage: 'whisper_result',
-          len: raw.length,
-          preview: raw.slice(0, 160), // avoid logging full diary content
-        }));
-      }
-
-      // Run detector BEFORE any cleaning/normalizing
-      const hallu = detectHallucination(raw);
-
-      if (DEBUG_TRANSCRIBE) {
-        console.log(JSON.stringify({
-          stage: 'hallucination_check',
-          matched: hallu.matched,
-          rule: hallu.rule ?? null,
-        }));
-      }
-
-      // Gate with a strictness toggle so you can test without breaking prod
-      if (STRICT_HALLUCINATION_BLOCK && hallu.matched) {
-        // Keep the server honest—return an empty string and let the client decide what to show
-        return { text: '' };
-      }
-
-      // Skip the old comprehensive hallucination detection if we're in debug mode
-      if (!STRICT_HALLUCINATION_BLOCK) {
-        console.log('🎯 DEBUG MODE: Bypassing comprehensive hallucination detection');
-        // Always return the raw text (no fallback string here)
-        return { text: raw };
-      }
-      
-      // 🎯 COMPREHENSIVE: Extensive hallucination detection patterns
-      const suspiciousTexts = [
-        // Polite/Social phrases (including cough-induced variations)
-        "thank you", "thank you very much", "thanks", "thank you so much",
-        "thanks for watching", "thanks for listening", "thank you for watching",
-        "thank", "thankyou", "thank u", "ty", "thx",
-        "bye", "goodbye", "bye bye", "see you later", "see you soon",
-        "hello", "hi", "hey", "hey there", "hello there",
-        
-        // Video/Content creator phrases  
-        "subscribe", "like and subscribe", "please subscribe",
-        "thanks for watching this video", "hope you enjoyed",
-        "don't forget to subscribe", "hit the like button",
-        
-        // Filler words and short responses
-        "you", "um", "uh", "oh", "ah", "er", "hmm",
-        "yeah", "yes", "no", "okay", "ok", "right",
-        "well", "so", "and", "but", "the", "i", "a",
-        
-        // Audio descriptions
-        "music", "applause", "laughter", "silence", "noise",
-        "background music", "clapping", "laughing",
-        
-        // Foreign language common phrases
-        "bon appétit", "merci", "gracias", "danke",
-        
-        // Empty/punctuation only
-        "", " ", ".", "...", "?", "!", ",", ";", ":", "-"
-      ];
-      
-      // 🎯 COMPREHENSIVE: Multi-layered hallucination detection
-      const cleanText = transcriptText.toLowerCase().trim();
-      
-      // Enhanced text cleaning for better matching
-      const normalizedText = cleanText
-        .replace(/[^\w\s]/g, ' ')  // Replace punctuation with spaces
-        .replace(/\s+/g, ' ')      // Normalize multiple spaces
-        .trim();
-      
-      // 1. Direct suspicious phrase matching (check both original and normalized)
-      const isLikelySuspicious = suspiciousTexts.some(suspicious => 
-        cleanText.includes(suspicious.toLowerCase()) || 
-        normalizedText.includes(suspicious.toLowerCase())
-      );
-      
-      // 2. Pattern-based detection
-      const hasRepeatedPhrases = /(.{3,})\1{2,}/.test(transcriptText); // Repeated patterns
-      const isVeryShort = transcriptText.length < 20; // Too short to be meaningful
-      const isOnlyPunctuation = /^[\s\.,!?;:'"()-]*$/.test(transcriptText); // Only punctuation
-      
-      // 🎯 ENHANCED: Word-level repetition detection for typing/keyboard sounds
-      const hasRepeatedWords = (() => {
-        const words = cleanText.split(/\s+/).filter(w => w.length > 0);
-        if (words.length < 4) return false;
-        
-        // Check for repetitive word patterns
-        const wordCounts: Record<string, number> = {};
-        words.forEach(word => {
-          wordCounts[word] = (wordCounts[word] || 0) + 1;
         });
-        
-        // If same word appears 3+ times in a short text, likely repetitive
-        const hasExcessiveRepeats = Object.values(wordCounts).some((count: number) => count >= 3);
-        
-        // Check for alternating patterns like "and an and an"
-        let alternatingPattern = false;
-        for (let i = 0; i < words.length - 3; i++) {
-          if (words[i] === words[i + 2] && words[i + 1] === words[i + 3]) {
-            alternatingPattern = true;
-            break;
-          }
-        }
-        
-        return hasExcessiveRepeats || alternatingPattern;
-      })();
-      
-      // 🎯 ENHANCED: Filler word dominance (common in keyboard/typing hallucinations)
-      const hasExcessiveFillers = (() => {
-        const fillerWords = ['and', 'an', 'the', 'a', 'to', 'of', 'in', 'that', 'is', 'it', 'on', 'be', 'at'];
-        const words = cleanText.split(/\s+/).filter(w => w.length > 0);
-        if (words.length < 3) return false;
-        
-        const fillerCount = words.filter(word => fillerWords.includes(word.toLowerCase())).length;
-        const fillerRatio = fillerCount / words.length;
-        
-        // If 80%+ of words are fillers, likely hallucination
-        return fillerRatio >= 0.8;
-      })();
-      
-      // 🎯 ENHANCED: Incomplete word detection (like "th" from "the")
-      const hasIncompleteWords = /\b[a-z]{1,2}\b/g.test(cleanText) && cleanText.length < 50;
-      
-      // 3. Advanced hallucination patterns
-      const isOnlyCommonWords = /^(you|i|the|a|an|and|or|but|so|well|um|uh|oh|ah|yes|no|okay|ok|right)\s*[\.!?]*$/i.test(cleanText);
-      const hasExcessivePoliteness = /(thank|thanks|please|sorry).*(thank|thanks|please|sorry)/i.test(cleanText);
-      const isGenericGreeting = /^(hello|hi|hey)(\s+(there|everyone|guys?))?[\.!?]*$/i.test(cleanText);
-      const isGenericFarewell = /^(bye|goodbye|see you)(\s+(later|soon|tomorrow))?[\.!?]*$/i.test(cleanText);
-      
-      // 🎯 NEW: Counting sequence detection (catches number sequences like "5, 6, 7, 8...")
-      const hasCountingSequence = /\b\d+[,.\s]*\d+[,.\s]*\d+/g.test(cleanText); // 3+ consecutive numbers
-      const isOnlyNumbers = /^[\d\s,.\-]*$/.test(cleanText); // Only numbers and punctuation
-      const hasSequentialNumbers = (() => {
-        const numbers = cleanText.match(/\b\d+\b/g);
-        if (!numbers || numbers.length < 3) return false;
-        
-        // Check if numbers form a sequence (ascending or descending)
-        const numArray = numbers.map(n => parseInt(n)).slice(0, 10); // Limit check to first 10 numbers
-        let isSequential = true;
-        
-        for (let i = 1; i < numArray.length; i++) {
-          const diff = numArray[i] - numArray[i-1];
-          if (Math.abs(diff) !== 1) {
-            isSequential = false;
-            break;
-          }
-        }
-        return isSequential;
-      })();
-      
-      // 4. Content creator specific patterns
-      const hasCreatorPhrases = /(subscribe|like|watch|video|channel|comment|bell|notification)/i.test(cleanText);
-      const hasVideoEnding = /(watching|listening).*?(video|content|show)/i.test(cleanText);
-      
-      // 5. Low confidence with suspicious characteristics
-      const isLowConfidenceAndSuspicious = (confidence !== undefined && confidence < -0.6) && 
-        (isVeryShort || isOnlyCommonWords || hasCreatorPhrases);
-      
-      // Combine all detection methods
-      const isHallucination = isLikelySuspicious || hasRepeatedPhrases || isOnlyPunctuation || 
-        isOnlyCommonWords || hasExcessivePoliteness || isGenericGreeting || 
-        isGenericFarewell || hasCreatorPhrases || hasVideoEnding || isLowConfidenceAndSuspicious ||
-        hasCountingSequence || isOnlyNumbers || hasSequentialNumbers || // Number sequence detection
-        hasRepeatedWords || hasExcessiveFillers || hasIncompleteWords; // 🎯 NEW: Typing/keyboard hallucination detection
-      
-      // 🎯 COMPREHENSIVE: Single check for all hallucination types
-      if (isHallucination) {
-        console.log(`⚠️ Hallucination detected: "${transcriptText}" - Confidence: ${confidence?.toFixed(3) ?? 'N/A'}`);
-        
-        // Provide specific feedback based on detection type
-        // 🎯 PRIORITY 1: Specific hallucination patterns (most important)
-        if (isLikelySuspicious) {
-          return { text: "🎤 No clear speech detected. Please try speaking more clearly into the microphone." };
-        } else if (hasRepeatedPhrases || hasRepeatedWords || hasExcessiveFillers || hasIncompleteWords) {
-          return { text: "No clear speech detected. Please record your own voice clearly." };
-        } else if (isOnlyPunctuation) {
-          return { text: "No clear speech detected. Please record your own voice clearly." };
-        } else if (hasCountingSequence || isOnlyNumbers || hasSequentialNumbers) {
-          return { text: "No clear speech detected. Please record your own voice clearly." };
-        } else if (hasCreatorPhrases || hasVideoEnding) {
-          return { text: "🎤 No clear speech detected. Please record your own voice clearly." };
-        } else if (isVeryShort) {
-          return { text: "🎤 Recording too brief. Please speak for a longer duration for better accuracy." };
-        } else {
-          return { text: "🎤 No clear speech detected. Please try speaking more clearly into the microphone." };
-        }
       }
-
-      // 🎯 NEW: Post-process text for better readability
-      let cleanedText = transcriptText
-        .replace(/\s+/g, ' ')           // Normalize whitespace
-        .replace(/([.!?])\s*([a-z])/g, '$1 $2') // Ensure space after sentence endings
-        .trim();
-      
-      // Capitalize first letter if not already
-      if (cleanedText.length > 0 && cleanedText[0] !== cleanedText[0].toUpperCase()) {
-        cleanedText = cleanedText[0].toUpperCase() + cleanedText.slice(1);
-      }
-      
-      // Ensure proper sentence ending
-      if (cleanedText.length > 0 && !'.!?'.includes(cleanedText[cleanedText.length - 1])) {
-        cleanedText += '.';
-      }
-
-      // 🆕 Bill based on AUTHORITATIVE duration, only if successful and not hallucination
-      if (!isHallucination) {
-        await admin.firestore().doc(`users/${userId}`).update({
-          'dailyUsage.speechMinutes': admin.firestore.FieldValue.increment(authoritativeMinutes),
-          'totalSpeechMinutes': admin.firestore.FieldValue.increment(authoritativeMinutes),
-          'lastActive': admin.firestore.FieldValue.serverTimestamp()
-        });
-        
-        console.log(`✅ Billed ${authoritativeMinutes.toFixed(2)} minutes to user ${userId}`);
-      } else {
-        console.log(`🚫 Hallucination detected - no billing for user ${userId}`);
-      }
-
-      // Return transcript to the client
-      console.log(`✅ Transcription successful for user: ${userId} - Result: "${cleanedText.substring(0, 50)}..."`);
-      return { text: cleanedText };
-    } catch (error) {
-      console.error("❌ Function error:", error);
-      throw error;
+    } catch (e: any) {
+      if (e.code) throw e;
+      logger.error('deletePost: storage error', { uid, postId, err: String(e) });
+      throw new HttpsError('internal', 'STORAGE_DELETE_FAILED');
     }
+
+    await postRef.delete();
+
+    logger.info('deletePost: success', { uid, postId, deletedFiles });
+    return { ok: true, deletedFiles };
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+export const transcribeAudio = onCall(
+  { region: REGION, timeoutSeconds: 60, memory: '512MiB' },
+  async (request): Promise<TranscribeAudioResult> => {
+    const uid = request.auth?.uid;
+    if (!uid) throw new HttpsError('unauthenticated', 'Sign in required');
+
+    // 1) Validate inputs
+    const { audioBase64, durationSec, mimeType } = (request.data ?? {}) as Partial<TranscribeAudioInput>;
+
+    if (!audioBase64 || typeof audioBase64 !== 'string') {
+      throw new HttpsError('invalid-argument', 'audioBase64 (string) required');
+    }
+
+    const dur = Number(durationSec);
+    if (!Number.isFinite(dur) || dur <= 0 || dur > MAX_STT_SECONDS) {
+      throw new HttpsError('invalid-argument', `durationSec must be 0 < d <= ${MAX_STT_SECONDS}`);
+    }
+
+    // 2) Decode base64 and validate size (max 25MB)
+    let buf: Buffer;
+    try {
+      const clean = sanitizeBase64(audioBase64);
+      buf = Buffer.from(clean, 'base64');
+    } catch (e) {
+      logger.error('transcribeAudio: base64 decode failed', { uid, err: String(e) });
+      throw new HttpsError('invalid-argument', 'Invalid base64 audio data');
+    }
+
+    if (buf.length === 0) {
+      throw new HttpsError('invalid-argument', 'Empty audio payload');
+    }
+    if (buf.length > MAX_AUDIO_BYTES) {
+      throw new HttpsError('invalid-argument', `Audio too large (max ${MAX_AUDIO_BYTES} bytes)`);
+    }
+
+    // 3) MIME normalization + filename
+    const typeRaw = typeof mimeType === 'string' ? mimeType.toLowerCase() : '';
+    const typeBase = typeRaw.split(';')[0].trim(); // strip parameters like ;codecs=opus
+    if (!ALLOWED_BASE.has(typeBase)) {
+      throw new HttpsError('invalid-argument', `Unsupported audio mimeType: ${mimeType ?? 'unknown'}`);
+    }
+
+    const filename =
+      (typeBase.includes('m4a') ? 'audio.m4a' :
+       typeBase.includes('wav') ? 'audio.wav' :
+       typeBase.includes('mpeg') ? 'audio.mp3' :
+       typeBase.includes('mp4') ? 'audio.mp4' :
+       'audio.webm');
+
+    // 3b) Plausibility check: bytes <-> duration
+    const bitrateKbps = Math.round((buf.length * 8) / Math.max(1, dur) / 1000);
+    if (bitrateKbps < 8 || bitrateKbps > 512) {
+      logger.warn('transcribeAudio: implausible bitrate', { uid, bitrateKbps, bytes: buf.length, dur });
+    }
+
+    // 4) Call Whisper
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      logger.error('transcribeAudio: OPENAI_API_KEY not configured');
+      throw new HttpsError('internal', 'STT service not configured');
+    }
+
+    let text = '';
+    const blob = new Blob([buf as any], { type: typeBase });
+    logger.info('transcribeAudio: calling Whisper', {
+      uid, durationSec: dur, mimeType: typeBase, bytes: buf.length, filename
+    });
+
+    const form = new FormData();
+    form.append('file', blob, filename);
+    form.append('model', 'whisper-1');
+    form.append('language', 'en');
+    form.append('response_format', 'json');
+    form.append('temperature', '0');
+
+    const ctrl = new AbortController();
+    const FETCH_TIMEOUT_MS = 30_000;
+    const timeoutId = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+
+    try {
+      const resp = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: form,
+        signal: ctrl.signal,
+      });
+
+      if (!resp.ok) {
+        const errorText = await resp.text().catch(() => 'Unknown error');
+        logger.error('transcribeAudio: Whisper API failed', {
+          uid, status: resp.status, statusText: resp.statusText, error: errorText.slice(0, 200)
+        });
+        if (resp.status >= 500) throw new HttpsError('unavailable', 'STT_NETWORK_ERROR');
+        throw new HttpsError('internal', 'STT_API_FAILED');
+      }
+
+      const result = await resp.json().catch(() => ({} as any));
+      text = typeof result.text === 'string' ? result.text : '';
+      if (text.length > MAX_TEXT_CHARS) {
+        logger.warn('transcribeAudio: text too long, truncating', { uid, len: text.length });
+        text = text.slice(0, MAX_TEXT_CHARS);
+      }
+    } catch (e: any) {
+      if (e?.name === 'AbortError') {
+        logger.error('transcribeAudio: fetch timeout', { uid });
+        throw new HttpsError('unavailable', 'STT_NETWORK_ERROR');
+      }
+      if (e.code) throw e;
+      logger.error('transcribeAudio: network error', { uid, err: String(e) });
+      throw new HttpsError('unavailable', 'STT_NETWORK_ERROR');
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    // 5) Early return for very short recordings
+    const BRIEF_SEC_HARD = 1.5;  // always too short
+    const BRIEF_SEC_SOFT = 3.0;  // short + few words
+    const trimmed = (text ?? '').trim();
+    const wordCount = trimmed ? trimmed.split(/\s+/).filter(Boolean).length : 0;
+
+    if (dur < BRIEF_SEC_HARD || (dur < BRIEF_SEC_SOFT && wordCount < 3)) {
+      return { text: MSG_TOO_BRIEF, durationSec: dur };
+    }
+
+    // 6) Hallucination detection
+    const hallu = detectHallucination(text);
+    if (DEBUG_TRANSCRIBE) logger.info('hallu.conservative', hallu);
+
+    const IS_PROD = process.env.NODE_ENV === 'production' || STRICT_HALLUCINATION_BLOCK;
+
+    if (IS_PROD && hallu.matched) {
+      logger.warn('blocked.conservative', { uid, rule: hallu.rule });
+      return { text: MSG_NO_SPEECH, durationSec: dur };
+    }
+
+    const cleanText = text.toLowerCase().trim();
+    const normalizedTight = cleanText.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    const tokens = normalizedTight ? normalizedTight.split(' ') : [];
+
+    const triggersShortExact =
+      normalizedTight.length > 0 &&
+      normalizedTight.length <= 24 &&
+      EXACT_SHORT_PHRASES.has(normalizedTight);
+
+    const suspectCount = tokens.filter(t => TOKEN_SUSPECTS.has(t)).length;
+    const tokenSuspicionRatio = tokens.length ? suspectCount / tokens.length : 0;
+    const triggersTokenDominance = tokens.length > 0 && tokens.length <= 4 && tokenSuspicionRatio >= 0.66;
+
+    const triggersCreator =
+      tokens.length > 0 && tokens.length <= 10 && CREATOR_PATTERNS.some(rx => rx.test(normalizedTight));
+
+    const phraseSuspicious = triggersShortExact || triggersTokenDominance || triggersCreator;
+
+    const s = scoreTranscript(cleanText, dur);
+    const SUSPICIOUS = phraseSuspicious || s.score >= 4;
+
+    if (SUSPICIOUS && IS_PROD) {
+      logger.warn('blocked.scored', { uid, ...s, phraseSuspicious, tokens: tokens.length });
+      return { text: MSG_NO_SPEECH, durationSec: dur };
+    }
+    if (SUSPICIOUS && !IS_PROD) {
+      logger.warn('dev-flag.scored', { uid, ...s, phraseSuspicious, tokens: tokens.length });
+    }
+
+    // 7) Post-process text for better readability
+    let cleanedText = text.replace(/\s+/g, ' ').trim();
+
+    if (/^[a-z]/.test(cleanedText)) {
+      cleanedText = cleanedText[0].toUpperCase() + cleanedText.slice(1);
+    }
+    if (/[A-Za-z]/.test(cleanedText) && !/[.!?]\s*$/.test(cleanedText)) {
+      cleanedText += '.';
+    }
+
+    logger.info('transcribeAudio: success', { uid, durationSec: dur, textLength: cleanedText.length });
+    return { text: cleanedText, durationSec: dur };
   }
 );
