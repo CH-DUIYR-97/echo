@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "emu": "firebase emulators:start --only auth,firestore,storage --project echo-auth-ba8a8",
+    "emu": "firebase emulators:start --only auth,firestore,storage,functions --project echo-auth-ba8a8",
     "emu:all": "firebase emulators:start --project echo-auth-ba8a8",
     "dev": "vite",
     "build": "tsc -b && vite build",
