@@ -354,107 +354,106 @@ export const CreateView: React.FC = () => {
   return (
     <div className="h-full flex flex-col justify-end p-4">
       <div className="w-full max-w-3xl mx-auto mb-4">
-        {/* Recording UI with waveform visualization - shows above the input box */}
-        {isRecording && (
-          <div className="mb-4 bg-gradient-to-br from-blue-600 to-purple-600 rounded-lg p-4 shadow-lg">
-            <RecordingBar
-              timeLabel={formatTime(recordingTime)}
-              bars={audioLevels}
-              onCancel={cancelRecording}
-              onConfirm={stopRecording}
-            />
-          </div>
-        )}
-
+        {/* Transcribing state - shows above the input box */}
         {isTranscribing && (
           <div className="mb-4 bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
             <span className="text-blue-500 font-medium">Transcribing...</span>
           </div>
         )}
 
-        {/* Main input box with reduced height */}
-        <div className="relative bg-zinc-800 border border-zinc-700/30 rounded-2xl p-4 shadow-lg">
-          {/* Selected images preview - inside the box */}
-          {selectedFiles.length > 0 && (
-            <div className="grid grid-cols-4 gap-2 mb-3">
-              {selectedFiles.map((file, idx) => {
-                const url = URL.createObjectURL(file)
-                fileUrlsRef.current.add(url)
-                
-                return (
-                  <div key={idx} className="relative group">
-                    <img
-                      src={url}
-                      alt={file.name}
-                      className="w-full h-20 object-cover rounded-lg"
-                    />
-                    <button
-                      onClick={() => removeFile(idx)}
-                      className="absolute top-1 right-1 bg-black/70 rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                      disabled={isPosting}
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-
-          {/* Text input with reduced height */}
-          <textarea
-            className="w-full h-15 bg-transparent border-none resize-none focus:outline-none text-white placeholder-zinc-50 text-[15px]"
-            placeholder="What's on your mind?"
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            disabled={isTranscribing || isPosting}
-          />
-
-          {/* Bottom bar with buttons inside the box - no separator line */}
-          <div className="flex items-center justify-between pt-2">
-            <div className="flex items-center gap-2">
-              {/* Mic button - only show when not recording */}
-              {!isRecording && (
-                <button
-                  onClick={startRecording}
-                  disabled={isTranscribing || isPosting}
-                  className="p-2 rounded-full hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  title="Record voice"
-                >
-                  <Mic className="w-5 h-5 text-zinc-400" />
-                </button>
+        {/* Main input box - same style when recording */}
+        <div className="relative bg-zinc-800 border border-zinc-700/30 rounded-2xl p-4 shadow-xl transition-all duration-300">
+          {/* Recording mode - show RecordingBar */}
+          {isRecording ? (
+            <RecordingBar
+              timeLabel={formatTime(recordingTime)}
+              bars={audioLevels}
+              onCancel={cancelRecording}
+              onConfirm={stopRecording}
+            />
+          ) : (
+            <>
+              {/* Selected images preview - inside the box */}
+              {selectedFiles.length > 0 && (
+                <div className="grid grid-cols-4 gap-2 mb-3">
+                  {selectedFiles.map((file, idx) => {
+                    const url = URL.createObjectURL(file)
+                    fileUrlsRef.current.add(url)
+                    
+                    return (
+                      <div key={idx} className="relative group">
+                        <img
+                          src={url}
+                          alt={file.name}
+                          className="w-full h-20 object-cover rounded-lg"
+                        />
+                        <button
+                          onClick={() => removeFile(idx)}
+                          className="absolute top-1 right-1 bg-black/70 rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                          disabled={isPosting}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
               )}
 
-              {/* Image attach button */}
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isButtonDisabled || selectedFiles.length >= MAX_IMAGES}
-                className="p-2 rounded-full hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                title="Attach images"
-              >
-                <Plus className="w-5 h-5 text-zinc-400" />
-              </button>
-              
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                onChange={handleFileSelect}
-                className="hidden"
+              {/* Text input with reduced height */}
+              <textarea
+                className="w-full h-15 bg-transparent border-none resize-none focus:outline-none text-white placeholder-zinc-50 text-[15px]"
+                placeholder="What's on your mind?"
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                disabled={isTranscribing || isPosting}
               />
-            </div>
 
-            {/* Arrow-up send button on the right */}
-            <button
-              onClick={handleSend}
-              disabled={isButtonDisabled || (!content.trim() && selectedFiles.length === 0)}
-              className="w-8 h-8 flex items-center justify-center rounded-full bg-white hover:bg-zinc-100 text-black border border-white/10 shadow-sm disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-              title="Send"
-            >
-              <ArrowUp className="w-5 h-5" />
-            </button>
-          </div>
+              {/* Bottom bar with buttons inside the box - no separator line */}
+              <div className="flex items-center justify-between pt-2">
+                <div className="flex items-center gap-2">
+                  {/* Mic button */}
+                  <button
+                    onClick={startRecording}
+                    disabled={isTranscribing || isPosting}
+                    className="p-2 rounded-full hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    title="Record voice"
+                  >
+                    <Mic className="w-5 h-5 text-zinc-400" />
+                  </button>
+
+                  {/* Image attach button */}
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isButtonDisabled || selectedFiles.length >= MAX_IMAGES}
+                    className="p-2 rounded-full hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    title="Attach images"
+                  >
+                    <Plus className="w-5 h-5 text-zinc-400" />
+                  </button>
+                  
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={handleFileSelect}
+                    className="hidden"
+                  />
+                </div>
+
+                {/* Arrow-up send button on the right */}
+                <button
+                  onClick={handleSend}
+                  disabled={isButtonDisabled || (!content.trim() && selectedFiles.length === 0)}
+                  className="w-8 h-8 flex items-center justify-center rounded-full bg-white hover:bg-zinc-100 text-black border border-white/10 shadow-sm disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                  title="Send"
+                >
+                  <ArrowUp className="w-5 h-5" />
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
