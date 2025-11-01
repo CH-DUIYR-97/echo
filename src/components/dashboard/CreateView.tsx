@@ -373,7 +373,7 @@ export const CreateView: React.FC = () => {
         )}
 
         {/* Main input box with reduced height */}
-        <div className="relative bg-zinc-900 border border-zinc-800 rounded-2xl p-4 shadow-lg">
+        <div className="relative bg-zinc-800 border border-zinc-700/30 rounded-2xl p-4 shadow-lg">
           {/* Selected images preview - inside the box */}
           {selectedFiles.length > 0 && (
             <div className="grid grid-cols-4 gap-2 mb-3">
@@ -403,7 +403,7 @@ export const CreateView: React.FC = () => {
 
           {/* Text input with reduced height */}
           <textarea
-            className="w-full h-20 bg-transparent border-none resize-none focus:outline-none text-white placeholder-zinc-500"
+            className="w-full h-15 bg-transparent border-none resize-none focus:outline-none text-white placeholder-zinc-50 text-[15px]"
             placeholder="What's on your mind?"
             value={content}
             onChange={(e) => setContent(e.target.value)}
@@ -449,10 +449,10 @@ export const CreateView: React.FC = () => {
             <button
               onClick={handleSend}
               disabled={isButtonDisabled || (!content.trim() && selectedFiles.length === 0)}
-              className="p-2 rounded-full bg-blue-500 hover:bg-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+              className="w-8 h-8 flex items-center justify-center rounded-full bg-white hover:bg-zinc-100 text-black border border-white/10 shadow-sm disabled:opacity-30 disabled:cursor-not-allowed transition-all"
               title="Send"
             >
-              <ArrowUp className="w-5 h-5 text-white" />
+              <ArrowUp className="w-5 h-5" />
             </button>
           </div>
         </div>
