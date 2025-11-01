@@ -1,12 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Plus, X, Mic } from 'lucide-react'
+import { Plus, X, Mic, ArrowUp } from 'lucide-react'
 import RecordingBar from '../ui/RecordingBar'
 import { auth, functions } from '../../lib/firebase'
 import { httpsCallable } from 'firebase/functions'
 import { compressBatch, type CompressedImage } from '../../lib/imageCompression'
 import { UploadManager } from '../../lib/uploader'
-import { buildDraftData, saveDraft, getDraft, deleteDraft, dataURLToBlob, type Draft } from '../../lib/drafts'
-import DraftNotification from '../modals/DraftNotification'
 
 const MAX_IMAGES = 5;
 
@@ -29,8 +27,6 @@ export const CreateView: React.FC = () => {
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [recordingTime, setRecordingTime] = useState(0)
   const [isPosting, setIsPosting] = useState(false)
-  const [showDraftNotification, setShowDraftNotification] = useState(false)
-  const [draftToRestore, setDraftToRestore] = useState<Draft | null>(null)
   const [audioLevels, setAudioLevels] = useState<number[]>([])
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -51,41 +47,6 @@ export const CreateView: React.FC = () => {
   const lastPushRef = useRef(0)
 
   const currentUser = auth.currentUser
-
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Draft restoration on mount
-  // ─────────────────────────────────────────────────────────────────────────────
-  useEffect(() => {
-    getDraft('current').then(draft => {
-      if (draft) {
-        setDraftToRestore(draft)
-        setShowDraftNotification(true)
-      }
-    }).catch(err => console.warn('[CreateView] Failed to load draft', err))
-  }, [])
-
-  const handleResumeDraft = async () => {
-    if (!draftToRestore) return
-    setContent(draftToRestore.contentText)
-    
-    // Convert stored images back to Files
-    const files: File[] = []
-    for (const img of draftToRestore.images) {
-      const blob = dataURLToBlob(img.dataURL)
-      files.push(new File([blob], img.name, { type: img.type }))
-    }
-    setSelectedFiles(files)
-    
-    setShowDraftNotification(false)
-    setDraftToRestore(null)
-    await deleteDraft('current')
-  }
-
-  const handleDismissDraft = async () => {
-    setShowDraftNotification(false)
-    setDraftToRestore(null)
-    await deleteDraft('current')
-  }
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Image selection with 5-image limit
@@ -309,15 +270,14 @@ export const CreateView: React.FC = () => {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // Post submission (with compression + upload)
+  // Send/Submit (with compression + upload)
   // ─────────────────────────────────────────────────────────────────────────────
-  const handlePost = async () => {
+  const handleSend = async () => {
     if (!currentUser) return
     
     const trimmed = content.trim()
     if (!trimmed && selectedFiles.length === 0) {
-      alert('Please add some content or images')
-      return
+      return // Silently ignore empty submissions
     }
     
     setIsPosting(true)
@@ -369,38 +329,12 @@ export const CreateView: React.FC = () => {
       // 4) Success! Clear state
       setContent('')
       setSelectedFiles([])
-      
-      alert('Post created successfully!')
     } catch (err: any) {
-      console.error('[CreateView] handlePost failed', err)
-      const message = err?.message || 'Failed to create post'
+      console.error('[CreateView] handleSend failed', err)
+      const message = err?.message || 'Failed to send'
       alert(`Error: ${message}`)
     } finally {
       setIsPosting(false)
-    }
-  }
-
-  const handleSaveDraft = async () => {
-    if (!content.trim() && selectedFiles.length === 0) {
-      alert('Nothing to save')
-      return
-    }
-    
-    try {
-      const draftData = await buildDraftData({
-        contentText: content,
-        imagesCompressed: selectedFiles.map(f => ({
-          blob: f,
-          name: f.name,
-          type: f.type,
-          size: f.size
-        }))
-      })
-      await saveDraft(draftData)
-      alert('Draft saved!')
-    } catch (err) {
-      console.error('[CreateView] saveDraft failed', err)
-      alert('Failed to save draft')
     }
   }
 
@@ -418,48 +352,31 @@ export const CreateView: React.FC = () => {
   // Render
   // ═══════════════════════════════════════════════════════════════════════════════
   return (
-    <div className="h-full flex flex-col">
-      {/* Draft notification */}
-      {showDraftNotification && draftToRestore && (
-        <DraftNotification
-          draftUpdatedAt={draftToRestore.updatedAt}
-          onResume={handleResumeDraft}
-          onDismiss={handleDismissDraft}
-        />
-      )}
+    <div className="h-full flex flex-col justify-end p-4">
+      <div className="w-full max-w-3xl mx-auto mb-4">
+        {/* Recording UI with waveform visualization - shows above the input box */}
+        {isRecording && (
+          <div className="mb-4 bg-gradient-to-br from-blue-600 to-purple-600 rounded-lg p-4 shadow-lg">
+            <RecordingBar
+              timeLabel={formatTime(recordingTime)}
+              bars={audioLevels}
+              onCancel={cancelRecording}
+              onConfirm={stopRecording}
+            />
+          </div>
+        )}
 
-      <div className="flex-1 overflow-y-auto p-4">
-        <div className="max-w-2xl mx-auto space-y-4">
-          {/* Text input */}
-          <textarea
-            className="w-full min-h-[200px] p-4 bg-zinc-900 border border-zinc-800 rounded-lg resize-none focus:outline-none focus:border-blue-500"
-            placeholder="What's on your mind?"
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            disabled={isTranscribing || isPosting}
-          />
+        {isTranscribing && (
+          <div className="mb-4 bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
+            <span className="text-blue-500 font-medium">Transcribing...</span>
+          </div>
+        )}
 
-          {/* Recording UI with waveform visualization */}
-          {isRecording && (
-            <div className="bg-gradient-to-br from-blue-600 to-purple-600 rounded-lg p-4 shadow-lg">
-              <RecordingBar
-                timeLabel={formatTime(recordingTime)}
-                bars={audioLevels}
-                onCancel={cancelRecording}
-                onConfirm={stopRecording}
-              />
-            </div>
-          )}
-
-          {isTranscribing && (
-            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
-              <span className="text-blue-500 font-medium">Transcribing...</span>
-            </div>
-          )}
-
-          {/* Selected images preview */}
+        {/* Main input box with reduced height */}
+        <div className="relative bg-zinc-900 border border-zinc-800 rounded-2xl p-4 shadow-lg">
+          {/* Selected images preview - inside the box */}
           {selectedFiles.length > 0 && (
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-4 gap-2 mb-3">
               {selectedFiles.map((file, idx) => {
                 const url = URL.createObjectURL(file)
                 fileUrlsRef.current.add(url)
@@ -469,14 +386,14 @@ export const CreateView: React.FC = () => {
                     <img
                       src={url}
                       alt={file.name}
-                      className="w-full h-24 object-cover rounded-lg"
+                      className="w-full h-20 object-cover rounded-lg"
                     />
                     <button
                       onClick={() => removeFile(idx)}
-                      className="absolute top-1 right-1 bg-black/50 rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="absolute top-1 right-1 bg-black/70 rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
                       disabled={isPosting}
                     >
-                      <X className="w-4 h-4" />
+                      <X className="w-3 h-3" />
                     </button>
                   </div>
                 )
@@ -484,58 +401,61 @@ export const CreateView: React.FC = () => {
             </div>
           )}
 
-          {/* Action buttons */}
-          <div className="flex items-center gap-2">
-            {/* Mic button - only show when not recording (RecordingBar handles controls when recording) */}
-            {!isRecording && (
+          {/* Text input with reduced height */}
+          <textarea
+            className="w-full h-20 bg-transparent border-none resize-none focus:outline-none text-white placeholder-zinc-500"
+            placeholder="What's on your mind?"
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            disabled={isTranscribing || isPosting}
+          />
+
+          {/* Bottom bar with buttons inside the box - no separator line */}
+          <div className="flex items-center justify-between pt-2">
+            <div className="flex items-center gap-2">
+              {/* Mic button - only show when not recording */}
+              {!isRecording && (
+                <button
+                  onClick={startRecording}
+                  disabled={isTranscribing || isPosting}
+                  className="p-2 rounded-full hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  title="Record voice"
+                >
+                  <Mic className="w-5 h-5 text-zinc-400" />
+                </button>
+              )}
+
+              {/* Image attach button */}
               <button
-                onClick={startRecording}
-                disabled={isTranscribing || isPosting}
-                className="p-3 rounded-full bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isButtonDisabled || selectedFiles.length >= MAX_IMAGES}
+                className="p-2 rounded-full hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                title="Attach images"
               >
-                <Mic className="w-5 h-5" />
+                <Plus className="w-5 h-5 text-zinc-400" />
               </button>
-            )}
+              
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+            </div>
 
-            {/* Image attach button */}
+            {/* Arrow-up send button on the right */}
             <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isButtonDisabled || selectedFiles.length >= MAX_IMAGES}
-              className="p-3 rounded-full bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={handleSend}
+              disabled={isButtonDisabled || (!content.trim() && selectedFiles.length === 0)}
+              className="p-2 rounded-full bg-blue-500 hover:bg-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+              title="Send"
             >
-              <Plus className="w-5 h-5" />
-            </button>
-            
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              onChange={handleFileSelect}
-              className="hidden"
-            />
-
-            {/* Save draft button */}
-            <button
-              onClick={handleSaveDraft}
-              disabled={isButtonDisabled}
-              className="ml-auto px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Save Draft
+              <ArrowUp className="w-5 h-5 text-white" />
             </button>
           </div>
         </div>
-      </div>
-
-      {/* Fixed Post button */}
-      <div className="fixed bottom-4 right-4">
-        <button
-          onClick={handlePost}
-          disabled={isButtonDisabled || (!content.trim() && selectedFiles.length === 0)}
-          className="px-8 py-3 bg-blue-500 hover:bg-blue-600 rounded-full font-medium shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {isPosting ? 'Posting...' : 'Post'}
-        </button>
       </div>
     </div>
   )
