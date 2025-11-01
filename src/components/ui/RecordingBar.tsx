@@ -68,9 +68,11 @@ export default function RecordingBar({
         >
         {(bars ?? fallback).slice(-barCount).map((v, i) => {
             const vv = Math.max(0, Math.min(1, v ?? 0));
-            // 0 → 0px (invisible), small values clamp to 0 to avoid flicker,
-            // then grow up to ~28px for nice peaks.
-            const h = vv < 0.02 ? 0 : Math.round(2 + vv * 26);
+            // Always show a minimum height (continuous baseline)
+            // Small values → 2-4px baseline, peaks grow up to ~28px
+            const minHeight = 2;
+            const maxHeight = 28;
+            const h = Math.round(minHeight + vv * (maxHeight - minHeight));
             return (
             <span
                 key={i}
