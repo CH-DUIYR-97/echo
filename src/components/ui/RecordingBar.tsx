@@ -1,4 +1,4 @@
-import { X, Check } from "lucide-react";
+import { X, Check, Loader2 } from "lucide-react";
 import { useRef, useState, useEffect } from "react";
 
 type Props = {
@@ -6,6 +6,7 @@ type Props = {
   bars?: number[];          // values 0..1
   onCancel: () => void;
   onConfirm: () => void;
+  isLoading?: boolean;      // Show spinner instead of checkmark
 };
 
 export default function RecordingBar({
@@ -13,6 +14,7 @@ export default function RecordingBar({
   bars,
   onCancel,
   onConfirm,
+  isLoading = false,
 }: Props) {
   // 🎯 DYNAMIC: Calculate bar count based on container width
   const containerRef = useRef<HTMLDivElement>(null);
@@ -96,13 +98,18 @@ export default function RecordingBar({
         {timeLabel}
       </span>
 
-      {/* Confirm */}
+      {/* Confirm / Loading */}
       <button
-        aria-label="Confirm"
+        aria-label={isLoading ? "Processing" : "Confirm"}
         onClick={onConfirm}
-        className="grid place-items-center w-8 h-8 rounded-full bg-white text-gray-900 ring-1 ring-black/5 shadow hover:opacity-90 active:scale-95 transition"
+        disabled={isLoading}
+        className="grid place-items-center w-8 h-8 rounded-full bg-white text-gray-900 ring-1 ring-black/5 shadow hover:opacity-90 active:scale-95 transition disabled:opacity-70 disabled:cursor-not-allowed"
       >
-        <Check className="w-4 h-4" />
+        {isLoading ? (
+          <Loader2 className="w-4 h-4 animate-spin" />
+        ) : (
+          <Check className="w-4 h-4" />
+        )}
       </button>
     </div>
   );

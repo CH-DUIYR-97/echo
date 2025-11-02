@@ -241,9 +241,18 @@ export const CreateView: React.FC = () => {
     try {
       const durationSec = Math.ceil(durationMs / 1000)
       const arrayBuffer = await audioBlob.arrayBuffer()
-      const audioBase64 = btoa(
-        String.fromCharCode(...new Uint8Array(arrayBuffer))
-      )
+      
+      // Convert to base64 in chunks to avoid stack overflow
+      const uint8Array = new Uint8Array(arrayBuffer)
+      const chunkSize = 8192 // Process 8KB at a time
+      let binaryString = ''
+      
+      for (let i = 0; i < uint8Array.length; i += chunkSize) {
+        const chunk = uint8Array.subarray(i, i + chunkSize)
+        binaryString += String.fromCharCode(...chunk)
+      }
+      
+      const audioBase64 = btoa(binaryString)
       
       const transcribeFn = httpsCallable<{ audioBase64: string; durationSec: number; mimeType: string }, { text: string }>(
         functions,
@@ -354,22 +363,16 @@ export const CreateView: React.FC = () => {
   return (
     <div className="h-full flex flex-col justify-end p-4">
       <div className="w-full max-w-3xl mx-auto mb-4">
-        {/* Transcribing state - shows above the input box */}
-        {isTranscribing && (
-          <div className="mb-4 bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
-            <span className="text-blue-500 font-medium">Transcribing...</span>
-          </div>
-        )}
-
         {/* Main input box - same style when recording */}
         <div className="relative bg-zinc-800 border border-zinc-700/30 rounded-2xl p-4 shadow-xl transition-all duration-300">
-          {/* Recording mode - show RecordingBar */}
-          {isRecording ? (
+          {/* Recording mode - show RecordingBar with loading state */}
+          {(isRecording || isTranscribing) ? (
             <RecordingBar
               timeLabel={formatTime(recordingTime)}
               bars={audioLevels}
               onCancel={cancelRecording}
               onConfirm={stopRecording}
+              isLoading={isTranscribing}
             />
           ) : (
             <>
