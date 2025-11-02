@@ -84,7 +84,7 @@ export const CreateView: React.FC = () => {
     
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mr = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+      const mr = new MediaRecorder(stream, { mimeType: 'audio/webm', audioBitsPerSecond: 128000 })
       
       audioChunksRef.current = []
       mr.ondataavailable = (e) => {
@@ -365,14 +365,22 @@ export const CreateView: React.FC = () => {
       <div className="w-full max-w-3xl mx-auto mb-4">
         {/* Main input box - same style when recording */}
         <div className="relative bg-zinc-800 border border-zinc-700/30 rounded-2xl p-4 shadow-xl transition-all duration-300">
-          {/* Recording mode - show RecordingBar with loading state */}
-          {(isRecording || isTranscribing) ? (
+          {/* Recording mode - show RecordingBar, spinner replaces checkmark when transcribing */}
+          {isRecording ? (
             <RecordingBar
               timeLabel={formatTime(recordingTime)}
               bars={audioLevels}
               onCancel={cancelRecording}
               onConfirm={stopRecording}
-              isLoading={isTranscribing}
+              isLoading={false}
+            />
+          ) : isTranscribing ? (
+            <RecordingBar
+              timeLabel={formatTime(recordingTime)}
+              bars={audioLevels}
+              onCancel={cancelRecording}
+              onConfirm={stopRecording}
+              isLoading={true}
             />
           ) : (
             <>
