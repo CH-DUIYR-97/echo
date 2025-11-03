@@ -6,7 +6,7 @@ import { httpsCallable } from 'firebase/functions'
 import { compressBatch, type CompressedImage } from '../../lib/imageCompression'
 import { UploadManager } from '../../lib/uploader'
 
-const MAX_IMAGES = 5;
+const MAX_IMAGES = 3;
 
 const formatTime = (ms: number) => {
   const m = Math.floor(ms / 60000);
@@ -74,6 +74,61 @@ export const CreateView: React.FC = () => {
 
   const removeFile = (index: number) => {
     setSelectedFiles(prev => prev.filter((_, i) => i !== index))
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Drag and Drop
+  // ─────────────────────────────────────────────────────────────────────────────
+  const [isDragging, setIsDragging] = useState(false)
+  const dragCounterRef = useRef(0)
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current++
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      setIsDragging(true)
+    }
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current--
+    if (dragCounterRef.current === 0) {
+      setIsDragging(false)
+    }
+  }
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current = 0
+    setIsDragging(false)
+
+    if (isButtonDisabled || selectedFiles.length >= MAX_IMAGES) {
+      return
+    }
+
+    const files = Array.from(e.dataTransfer.files)
+    const imageFiles = files.filter(f => f.type.startsWith('image/'))
+    
+    if (imageFiles.length !== files.length) {
+      showToast('Only image files are supported')
+    }
+    
+    const remaining = MAX_IMAGES - selectedFiles.length
+    if (imageFiles.length > remaining) {
+      showToast(`You can only add ${remaining} more image(s). Using the first ${remaining}.`)
+    }
+    
+    const limited = imageFiles.slice(0, remaining)
+    setSelectedFiles(prev => [...prev, ...limited].slice(0, MAX_IMAGES))
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -363,8 +418,18 @@ export const CreateView: React.FC = () => {
   return (
     <div className="h-full flex flex-col justify-end p-4">
       <div className="w-full max-w-3xl mx-auto mb-4">
-        {/* Main input box - same style when recording */}
-        <div className="relative bg-zinc-800 border border-zinc-700/30 rounded-2xl p-4 shadow-xl transition-all duration-300">
+        {/* Main input box - same style when recording, with drag-and-drop */}
+        <div 
+          className={`relative rounded-2xl p-4 shadow-xl transition-all duration-300 ${
+            isDragging 
+              ? 'bg-zinc-600 border-2 border-blue-400 border-dashed' 
+              : 'bg-zinc-800 border border-zinc-700/30'
+          }`}
+          onDragEnter={handleDragEnter}
+          onDragLeave={handleDragLeave}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+        >
           {/* Recording mode - show RecordingBar, spinner replaces checkmark when transcribing */}
           {isRecording ? (
             <RecordingBar
@@ -384,6 +449,20 @@ export const CreateView: React.FC = () => {
             />
           ) : (
             <>
+              {/* Drag and drop overlay */}
+              {isDragging && (
+                <div className="absolute inset-0 flex items-center justify-center bg-blue-500/20 backdrop-blur-sm rounded-2xl z-10 pointer-events-none">
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="text-blue-300 text-xl font-semibold">
+                      📸 Drop images here
+                    </div>
+                    <div className="text-blue-400/80 text-sm">
+                      Up to {MAX_IMAGES} images
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Selected images preview - inside the box */}
               {selectedFiles.length > 0 && (
                 <div className="grid grid-cols-4 gap-2 mb-3">
@@ -417,6 +496,14 @@ export const CreateView: React.FC = () => {
                 placeholder="What's on your mind?"
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    if (!isButtonDisabled && (content.trim() || selectedFiles.length > 0)) {
+                      handleSend()
+                    }
+                  }
+                }}
                 disabled={isTranscribing || isPosting}
               />
 

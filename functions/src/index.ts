@@ -184,9 +184,9 @@ export const createMemoryPost = onCall(
 
     const totalBytes = media.reduce((sum, m) => sum + (m.size || 0), 0);
 
-    // 3) Validate: max 5 images
-    if (media.length > 5) {
-      throw new HttpsError('failed-precondition', 'Max 5 images allowed.');
+    // 3) Validate: max 3 images
+    if (media.length > 3) {
+      throw new HttpsError('failed-precondition', 'Max 3 images allowed.');
     }
 
     const content = (contentText ?? '').trim();
