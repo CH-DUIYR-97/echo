@@ -449,16 +449,21 @@ export const CreateView: React.FC = () => {
             />
           ) : (
             <>
-              {/* Drag and drop overlay */}
+            {/* Drag and drop overlay */}
               {isDragging && (
-                <div className="absolute inset-0 flex items-center justify-center bg-blue-500/20 backdrop-blur-sm rounded-2xl z-10 pointer-events-none">
-                  <div className="flex flex-col items-center gap-2">
-                    <div className="text-blue-300 text-xl font-semibold">
-                      📸 Drop images here
-                    </div>
-                    <div className="text-blue-400/80 text-sm">
-                      Up to {MAX_IMAGES} images
-                    </div>
+                <div
+                  className="absolute inset-0 z-40 flex items-center justify-center rounded-2xl
+                            bg-blue-500/20 backdrop-blur-sm pointer-events-none select-none"
+                >
+                  <div
+                    className="inline-flex items-center gap-2 text-white text-base font-bold whitespace-nowrap"
+                    role="status"
+                    aria-live="polite"
+                    aria-atomic="true"
+                    data-testid="drop-overlay"
+                  >
+                    <span aria-hidden="true">📸</span>
+                    <span>Drop up to {MAX_IMAGES} {MAX_IMAGES === 1 ? 'image' : 'images'} here</span>
                   </div>
                 </div>
               )}
