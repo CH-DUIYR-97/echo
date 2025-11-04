@@ -1,6 +1,7 @@
 {
   "name": "functions",
   "scripts": {
+    "emu": "firebase emulators:start --only auth,firestore,storage,functions",
     "lint": "echo \"skipping lint (temp)\"",
     "build": "tsc",
     "build:watch": "tsc --watch",

@@ -4,6 +4,7 @@ import { Home, Plus } from 'lucide-react'
 import { getCurrentUser } from '../../lib/auth'
 import { getUserProfile } from '../../lib/database'
 import { CreateView } from './CreateView'
+import { MemoriesView } from './MemoriesView'
 
 
 export const Dashboard: React.FC = () => {
@@ -146,12 +147,7 @@ export const Dashboard: React.FC = () => {
         )}
 
         {currentView === 'memories' && (
-          <div className="h-full flex items-center justify-center">
-            <div className="text-center">
-              <h2 className="text-2xl font-bold text-white mb-4">Welcome to Echo</h2>
-              <p className="text-gray-400">Click "Create" to start writing your journal entry</p>
-            </div>
-          </div>
+          <MemoriesView />
         )}
 
         {/* Overlay to close menu when clicking outside */}

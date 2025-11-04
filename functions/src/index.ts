@@ -152,14 +152,22 @@ export const createMemoryPost = onCall(
     }
 
     // 1) List storage objects under the post
+    // In emulator, use default bucket
     const bucket = storage.bucket();
     const base = `users/${uid}/posts/${postId}`;
     let files: Array<import('@google-cloud/storage').File> = [];
     try {
       const [images] = await bucket.getFiles({ prefix: `${base}/images/` });
       files = images; // Only images now
-    } catch (e) {
-      logger.error('Storage list failed', { uid, postId, err: String(e) });
+    } catch (e: any) {
+      logger.error('Storage list failed', {
+        uid,
+        postId,
+        code: e?.code,
+        message: e?.message,
+        errors: e?.errors,
+        stack: e?.stack?.slice(0, 400)
+      });
       throw new HttpsError('internal', 'STORAGE_LIST_FAILED');
     }
 
@@ -252,6 +260,7 @@ export const deletePost = onCall(
     }
 
     // Delete Storage folder
+    // In emulator, use default bucket
     const bucket = storage.bucket();
     const prefix = `users/${uid}/posts/${postId}/`;
     let deletedFiles = 0;
@@ -357,7 +366,7 @@ export const transcribeAudio = onCall(
       uid, durationSec: dur, mimeType: typeBase, bytes: buf.length, filename
     });
 
-    const form = new FormData();
+      const form = new FormData();
     form.append('file', blob, filename);
     form.append('model', 'whisper-1');
     form.append('language', 'en');
@@ -375,7 +384,7 @@ export const transcribeAudio = onCall(
         body: form,
         signal: ctrl.signal,
       });
-
+      
       if (!resp.ok) {
         const errorText = await resp.text().catch(() => 'Unknown error');
         logger.error('transcribeAudio: Whisper API failed', {
