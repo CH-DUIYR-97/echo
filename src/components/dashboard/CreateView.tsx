@@ -366,6 +366,7 @@ export const CreateView: React.FC = () => {
         const ext = c.contentType === 'image/webp' ? 'webp' : 'jpg'
         return {
           blob: c.blob,
+          type: 'image' as const,
           options: {
             storagePath: `users/${currentUser.uid}/posts/${postId}/images/${idx}_img.${ext}`,
             contentType: c.contentType,

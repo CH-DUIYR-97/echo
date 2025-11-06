@@ -155,6 +155,13 @@ export const createMemoryPost = onCall(
     // In emulator, use default bucket
     const bucket = storage.bucket();
     const base = `users/${uid}/posts/${postId}`;
+    
+    // 🔎 add this: verify which bucket we're hitting and whether emulator is wired
+    logger.info('bucket-check', {
+      bucketName: bucket.name,
+      storageEmulator: process.env.FIREBASE_STORAGE_EMULATOR_HOST ?? null,
+    });
+    
     let files: Array<import('@google-cloud/storage').File> = [];
     try {
       const [images] = await bucket.getFiles({ prefix: `${base}/images/` });
