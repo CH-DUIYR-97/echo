@@ -1,5 +1,5 @@
 // /src/components/modals/DraftNotification.tsx
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export interface DraftNotificationProps {
   draftUpdatedAt: number;
@@ -22,6 +22,15 @@ function formatDraftAge(updatedAt: number): string {
 
 export default function DraftNotification(p: DraftNotificationProps) {
     const { onResume, onDismiss } = p;
+    
+    const handleDismiss = () => {
+      onDismiss?.();
+    };
+    
+    const handleResume = () => {
+      onResume?.();
+    };
+
     const [isVisible, setIsVisible] = useState(true);
     const timerRef = useRef<number | null>(null);
     const closedRef = useRef(false);
