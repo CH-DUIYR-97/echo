@@ -109,7 +109,7 @@ export const Dashboard: React.FC = () => {
       {/* Main Content Area */}
       <div className="flex-1 relative">
         {/* Hamburger Menu (positioned absolutely) */}
-        <div className="absolute top-4 right-4 z-10">
+        <div className="absolute top-4 right-4 z-50">
           <div className="relative">
             {/* Hamburger Button */}
             <button
@@ -125,7 +125,10 @@ export const Dashboard: React.FC = () => {
 
             {/* Dropdown Menu */}
             {isMenuOpen && (
-              <div className="absolute right-0 mt-2 w-32 bg-black rounded-lg shadow-lg border border-gray-700 z-50">
+              <div 
+                className="absolute right-0 mt-2 w-32 bg-black rounded-lg shadow-lg border border-gray-700 z-[60]"
+                onClick={(e) => e.stopPropagation()}
+              >
                 <div className="py-1">
                   <button
                     onClick={handleSignOut}
