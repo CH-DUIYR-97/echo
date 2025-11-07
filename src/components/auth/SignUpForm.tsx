@@ -1,6 +1,5 @@
 import React, { useState } from 'react'
 import { Button, Input } from '../ui'
-import { cn } from '../../lib/utils'
 import type { AuthMode } from './AuthPage'
 import { Eye, EyeOff, Info } from 'lucide-react'
 import { signUpWithEmail, getAuthErrorMessage } from '../../lib/auth'

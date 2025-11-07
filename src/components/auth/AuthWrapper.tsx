@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { onAuthStateChanged, getCurrentUser } from '../../lib/auth'
+import { onAuthStateChanged } from '../../lib/auth'
 import type { User } from 'firebase/auth'
 import { AuthPage } from './AuthPage'
 import { Dashboard } from '../dashboard/Dashboard'

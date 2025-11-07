@@ -1,5 +1,4 @@
 import React, { useState } from 'react'
-import { cn } from '../../lib/utils'
 import { AuthTabs } from './AuthTabs'
 import { SignInForm } from './SignInForm'
 import { SignUpForm } from './SignUpForm'
