@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { auth } from '../../lib/firebase'
 import { collection, query, where, orderBy, limit, getDocs, startAfter, DocumentSnapshot } from 'firebase/firestore'
 import { db } from '../../lib/firebase'
@@ -154,11 +154,16 @@ export const MemoriesView: React.FC = () => {
     )
   }
 
+  const handleDeletePost = (postId: string) => {
+    // Remove post from UI immediately
+    setPosts(prev => prev.filter(post => post.id !== postId))
+  }
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-2xl mx-auto py-6 px-4 space-y-6">
         {posts.map(post => (
-          <PostCard key={post.id} post={post} />
+          <PostCard key={post.id} post={post} onDelete={handleDeletePost} />
         ))}
 
         {/* Loading more indicator */}

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Trash2 } from 'lucide-react'
 import { ref, getDownloadURL } from 'firebase/storage'
-import { storage } from '../../lib/firebase'
+import { storage, functions } from '../../lib/firebase'
+import { httpsCallable } from 'firebase/functions'
 
 interface Post {
   id: string
@@ -30,12 +31,15 @@ interface Post {
 
 interface PostCardProps {
   post: Post
+  onDelete?: (postId: string) => void
 }
 
-export const PostCard: React.FC<PostCardProps> = ({ post }) => {
+export const PostCard: React.FC<PostCardProps> = ({ post, onDelete }) => {
   const [currentImageIndex, setCurrentImageIndex] = useState(0)
   const [imageUrls, setImageUrls] = useState<string[]>([])
   const [loadingImages, setLoadingImages] = useState(true)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
   // Format timestamp to: Monday, November 4 2025, 3:45pm
   const formatTimestamp = (timestamp: any) => {
@@ -96,13 +100,89 @@ export const PostCard: React.FC<PostCardProps> = ({ post }) => {
     )
   }
 
+  const handleDelete = async () => {
+    if (!showDeleteConfirm) {
+      setShowDeleteConfirm(true)
+      return
+    }
+
+    setIsDeleting(true)
+
+    try {
+      const deleteFn = httpsCallable<{ postId: string }, { ok: boolean }>(
+        functions,
+        'deletePost'
+      )
+
+      await deleteFn({ postId: post.id })
+
+      // Call parent callback to remove from UI
+      if (onDelete) {
+        onDelete(post.id)
+      }
+    } catch (error) {
+      console.error('Error deleting post:', error)
+      alert('Failed to delete post. Please try again.')
+      setShowDeleteConfirm(false)
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
+  const handleCancelDelete = () => {
+    setShowDeleteConfirm(false)
+  }
+
   return (
-    <div className="bg-zinc-900 rounded-lg overflow-hidden border border-zinc-800">
-      {/* Timestamp */}
-      <div className="px-4 py-3 border-b border-zinc-800">
+    <div className="bg-zinc-900 rounded-lg overflow-hidden border border-zinc-800 relative">
+      {/* Delete confirmation overlay */}
+      {showDeleteConfirm && (
+        <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center rounded-lg">
+          <div className="bg-zinc-800 rounded-lg p-6 max-w-sm mx-4 border border-zinc-700">
+            <h3 className="text-white text-lg font-semibold mb-2">Delete this entry?</h3>
+            <p className="text-gray-400 text-sm mb-6">
+              This will permanently delete your journal entry and all its images. This action cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={handleCancelDelete}
+                disabled={isDeleting}
+                className="flex-1 px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={isDeleting}
+                className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {isDeleting ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Deleting...
+                  </>
+                ) : (
+                  'Delete'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Timestamp with delete button */}
+      <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
         <p className="text-gray-400 text-sm font-medium">
           {formatTimestamp(post.meta.createdAt)}
         </p>
+        <button
+          onClick={handleDelete}
+          disabled={isDeleting}
+          className="p-2 hover:bg-zinc-800 rounded-lg transition-colors group disabled:opacity-50"
+          title="Delete entry"
+        >
+          <Trash2 className="w-4 h-4 text-gray-500 group-hover:text-red-500 transition-colors" />
+        </button>
       </div>
 
       {/* Image Carousel */}
