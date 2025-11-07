@@ -464,7 +464,7 @@ export const CreateView: React.FC = () => {
                     data-testid="drop-overlay"
                   >
                     <span aria-hidden="true">📸</span>
-                    <span>Drop up to {MAX_IMAGES} {MAX_IMAGES === 1 ? 'image' : 'images'} here</span>
+                    <span>Drop up to {MAX_IMAGES} images here</span>
                   </div>
                 </div>
               )}
