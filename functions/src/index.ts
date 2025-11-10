@@ -2,8 +2,10 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions';
 import { db, storage, FieldValue } from './admin';
-
+import { defineSecret } from 'firebase-functions/params';
+ 
 const REGION = 'australia-southeast1';
+const OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
 
 // ── STT guardrails ────────────────────────────────────────────────────────────
 const MAX_STT_SECONDS = 1200;                 // 20 minutes
@@ -306,10 +308,16 @@ export const deletePost = onCall(
 
 // ═══════════════════════════════════════════════════════════════════════════════
 export const transcribeAudio = onCall(
-  { region: REGION, timeoutSeconds: 60, memory: '512MiB' },
-  async (request): Promise<TranscribeAudioResult> => {
+  { region: REGION, 
+    timeoutSeconds: 60, 
+    memory: '512MiB', 
+    secrets: [OPENAI_API_KEY],
+   },
+   async (request): Promise<TranscribeAudioResult> => {
     const uid = request.auth?.uid;
-    if (!uid) throw new HttpsError('unauthenticated', 'Sign in required');
+    if (!uid) {
+      throw new HttpsError('unauthenticated', 'Sign in required');
+    }
 
     // 1) Validate inputs
     const { audioBase64, durationSec, mimeType } = (request.data ?? {}) as Partial<TranscribeAudioInput>;
@@ -361,7 +369,7 @@ export const transcribeAudio = onCall(
     }
 
     // 4) Call Whisper
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = OPENAI_API_KEY.value();
     if (!apiKey) {
       logger.error('transcribeAudio: OPENAI_API_KEY not configured');
       throw new HttpsError('internal', 'STT service not configured');
