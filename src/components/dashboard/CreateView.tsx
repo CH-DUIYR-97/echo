@@ -373,12 +373,34 @@ export const CreateView: React.FC = () => {
           }
         }
       })
+
+      uploadItems.forEach(it => {
+        console.log('[CreateView] prepared item', {
+          path: it.options.storagePath,
+          type: it.options.contentType,
+          size: it.blob?.size
+        })
+      })
       
       console.log('[CreateView] Uploading images...')
       const uploadResults = await uploader.uploadBatch(uploadItems)
+
+      console.log('[CreateView] Upload results', uploadResults.map(r => {
+        const err = r.error as unknown;
+        const code = (err && typeof err === 'object' && 'code' in err)
+          ? (err as any).code
+          : undefined;
+      
+        return {
+          status: r.status,
+          path: r.path,
+          error: code ?? r.error?.message,
+        };
+      }));
       
       const failed = uploadResults.filter(r => r.status !== 'completed')
       if (failed.length > 0) {
+        console.error('[CreateView] Upload failed details:', failed)
         throw new Error(`${failed.length} upload(s) failed`)
       }
       

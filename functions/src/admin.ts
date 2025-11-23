@@ -1,25 +1,26 @@
 // functions/src/admin.ts
-import { initializeApp, getApps, getApp } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import { getStorage } from 'firebase-admin/storage';
+import * as admin from 'firebase-admin';
 
-const projectId =
-  process.env.GCLOUD_PROJECT ||
-  process.env.GCP_PROJECT ||
-  (process.env.FIREBASE_CONFIG &&
-    JSON.parse(process.env.FIREBASE_CONFIG).projectId);
+let app: admin.app.App;
 
-const defaultBucket =
-  process.env.FIREBASE_STORAGE_BUCKET ||
-  (projectId ? `${projectId}.appspot.com` : undefined);
+if (!admin.apps.length) {
+  // Try to read FIREBASE_CONFIG (set automatically in Cloud Functions)
+  const firebaseConfig = process.env.FIREBASE_CONFIG
+    ? JSON.parse(process.env.FIREBASE_CONFIG)
+    : undefined;
 
-// Ensure we only init once (emulator reload safety)
-const app = getApps().length
-  ? getApp()
-  : initializeApp({
-      storageBucket: defaultBucket,
-    });
+  const storageBucket =
+    process.env.FIREBASE_STORAGE_BUCKET ||
+    firebaseConfig?.storageBucket || // <-- use the real bucket from config
+    undefined;
 
-export const db = getFirestore(app);
-export const storage = getStorage(app);
-export { FieldValue };
+  app = admin.initializeApp({
+    storageBucket,
+  });
+} else {
+  app = admin.app();
+}
+
+export const db = admin.firestore(app);
+export const storage = admin.storage(app);
+export const FieldValue = admin.firestore.FieldValue;

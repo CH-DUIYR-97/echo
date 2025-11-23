@@ -1,5 +1,9 @@
 {
   "projects": {
-    "default": "echo-auth-ba8a8"
-  }
+    "default": "echo-auth-ba8a8",
+    "prod": "echo-auth-ba8a8",
+    "dev": "e-commerce-db-2eb7e"
+  },
+  "targets": {},
+  "etags": {}
 }

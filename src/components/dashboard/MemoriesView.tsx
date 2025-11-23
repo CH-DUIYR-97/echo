@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { auth } from '../../lib/firebase'
+import { onAuthStateChanged } from 'firebase/auth'
 import { collection, query, where, orderBy, limit, getDocs, startAfter, DocumentSnapshot } from 'firebase/firestore'
 import { db } from '../../lib/firebase'
 import { PostCard } from './PostCard'
@@ -38,14 +39,42 @@ export const MemoriesView: React.FC = () => {
   const [lastDoc, setLastDoc] = useState<DocumentSnapshot | null>(null)
   const observerRef = useRef<IntersectionObserver | null>(null)
   const loadMoreRef = useRef<HTMLDivElement>(null)
-  const currentUser = auth.currentUser
+  const [uid, setUid] = useState<string | null>(null)
 
-  // Initial load
+// subscribe to auth and set uid 
   useEffect(() => {
-    if (currentUser) {
-      loadPosts(true)
-    }
-  }, [currentUser])
+    const unsub = onAuthStateChanged(auth, (user) => {
+      console.log('[auth] uid =', user?.uid ?? '(none)')      // ⬅️ WHO AM I?
+      setUid(user?.uid ?? null)
+    })
+    return unsub
+  }, [])
+
+  useEffect(() => {
+    if (!uid) return
+    const path = `users/${uid}/posts`
+    console.log('[debug] path =', path)                       // ⬅️ WHICH LOCKER?
+  
+    // tiny read to prove rules/path/auth are correct
+    getDocs(collection(db, 'users', uid, 'posts'))
+      .then(snap => console.log('[debug] docs count =', snap.size))
+      .catch((e: any) => console.error('[debug] simple read failed', e.code, e.message))
+  }, [uid])
+
+
+// 2) 🔒 Reset list whenever uid changes (put this immediately after #1)
+useEffect(() => {
+  setPosts([])
+  setHasMore(true)
+  setLastDoc(null)
+  setLoading(false) // optional: clears spinners on sign-out
+}, [uid])
+
+
+  // Initial load when we actually know the uid
+  useEffect(() => {
+    if (uid) loadPosts(true)
+  }, [uid])
 
   // Infinite scroll observer
   useEffect(() => {
@@ -70,20 +99,19 @@ export const MemoriesView: React.FC = () => {
   }, [hasMore, loading, lastDoc])
 
   const loadPosts = async (isInitial: boolean) => {
-    if (!currentUser) return
-
+    if (!uid) return
+  
     setLoading(true)
-
     try {
-      const postsRef = collection(db, `users/${currentUser.uid}/posts`)
-      
+      const postsRef = collection(db, 'users', uid, 'posts') // safer path building
+  
       let q = query(
         postsRef,
         where('flags.archived', '==', false),
         orderBy('meta.createdAt', 'desc'),
         limit(POSTS_PER_PAGE)
       )
-
+  
       if (!isInitial && lastDoc) {
         q = query(
           postsRef,
@@ -122,7 +150,7 @@ export const MemoriesView: React.FC = () => {
     }
   }
 
-  if (!currentUser) {
+  if (!uid) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-center">
