@@ -1,0 +1,5 @@
+{
+  "appId": "com.echo.app",
+  "appName": "Echo",
+  "webDir": "dist"
+}
