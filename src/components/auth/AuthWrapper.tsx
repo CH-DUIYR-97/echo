@@ -1,19 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import type { User } from 'firebase/auth';
-import { onAuthStateChanged, completeRedirectIfAny } from '../../lib/auth';
+import { onAuthStateChanged } from '../../lib/auth';
 import { AuthPage } from './AuthPage';
 import { Dashboard } from '../dashboard/Dashboard';
 
 export const AuthWrapper: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-
-  // 1) Finish any pending Google redirect (needed on iOS/Android via Capacitor)
-  useEffect(() => {
-    completeRedirectIfAny().catch((err: unknown) => {
-      console.error('[auth] completeRedirectIfAny failed', err);
-    });
-  }, []);
 
   // 2) Safety timeout so the UI never hangs forever
   useEffect(() => {
