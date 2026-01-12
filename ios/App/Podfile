@@ -12,6 +12,11 @@ def capacitor_pods
   pod 'Capacitor', :path => '../../node_modules/@capacitor/ios'
   pod 'CapacitorCordova', :path => '../../node_modules/@capacitor/ios'
   pod 'CapgoCapacitorSocialLogin', :path => '../../node_modules/@capgo/capacitor-social-login'
+
+
+  # Add Firebase native SDKs
+  pod 'FirebaseCore'
+  pod 'FirebaseAuth'
 end
 
 target 'App' do
