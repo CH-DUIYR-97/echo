@@ -13,8 +13,7 @@ def capacitor_pods
   pod 'CapacitorCordova', :path => '../../node_modules/@capacitor/ios'
   pod 'CapgoCapacitorSocialLogin', :path => '../../node_modules/@capgo/capacitor-social-login'
 
-
-  # Add Firebase native SDKs
+  # Firebase native SDKs - DO NOT DELETE THESE
   pod 'FirebaseCore'
   pod 'FirebaseAuth'
 end
