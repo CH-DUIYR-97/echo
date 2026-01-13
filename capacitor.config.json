@@ -1,5 +1,13 @@
 {
   "appId": "com.echo.app",
   "appName": "Echo",
-  "webDir": "dist"
+  "webDir": "dist",
+  "ios": {
+    "contentInset": "always",
+    "allowsLinkPreview": false
+  },
+  "server": {
+    "cleartext": true,
+    "androidScheme": "https"
+  }
 }

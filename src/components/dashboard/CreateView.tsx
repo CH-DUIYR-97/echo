@@ -448,11 +448,11 @@ export const CreateView: React.FC = () => {
               ? 'bg-zinc-600 border-2 border-blue-400 border-dashed' 
               : 'bg-zinc-800 border border-zinc-700/30'
           }`}
-          onDragEnter={handleDragEnter}
-          onDragLeave={handleDragLeave}
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
           onDragOver={handleDragOver}
-          onDrop={handleDrop}
-        >
+            onDrop={handleDrop}
+          >
           {/* Recording mode - show RecordingBar, spinner replaces checkmark when transcribing */}
           {isRecording ? (
             <RecordingBar
@@ -488,11 +488,11 @@ export const CreateView: React.FC = () => {
                     <span aria-hidden="true">📸</span>
                     <span>Drop up to {MAX_IMAGES} images here</span>
                   </div>
-                </div>
-              )}
+              </div>
+            )}
 
               {/* Selected images preview - inside the box */}
-              {selectedFiles.length > 0 && (
+            {selectedFiles.length > 0 && (
                 <div className="grid grid-cols-4 gap-2 mb-3">
                   {selectedFiles.map((file, idx) => {
                     const url = URL.createObjectURL(file)
@@ -505,18 +505,18 @@ export const CreateView: React.FC = () => {
                           alt={file.name}
                           className="w-full h-20 object-cover rounded-lg"
                         />
-                        <button
+                      <button
                           onClick={() => removeFile(idx)}
                           className="absolute top-1 right-1 bg-black/70 rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
                           disabled={isPosting}
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </div>
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
                     )
                   })}
-                </div>
-              )}
+              </div>
+            )}
 
               {/* Text input with reduced height */}
               <textarea
@@ -557,15 +557,15 @@ export const CreateView: React.FC = () => {
                   >
                     <Plus className="w-5 h-5 text-zinc-400" />
                   </button>
-                  
-                  <input
+
+                          <input
                     ref={fileInputRef}
-                    type="file"
+                            type="file"
                     accept="image/*"
-                    multiple
-                    onChange={handleFileSelect}
-                    className="hidden"
-                  />
+                            multiple
+                            onChange={handleFileSelect}
+                            className="hidden"
+                          />
                 </div>
 
                 {/* Arrow-up send button on the right */}
@@ -584,6 +584,6 @@ export const CreateView: React.FC = () => {
       </div>
     </div>
   )
-}
+} 
 
 export default CreateView
