@@ -1,6 +1,6 @@
 require_relative '../../node_modules/@capacitor/ios/scripts/pods_helpers'
 
-platform :ios, '14.0'
+platform :ios, '17.0'
 use_frameworks!
 
 # workaround to avoid Xcode caching of Pods that requires
@@ -11,11 +11,8 @@ install! 'cocoapods', :disable_input_output_paths => true
 def capacitor_pods
   pod 'Capacitor', :path => '../../node_modules/@capacitor/ios'
   pod 'CapacitorCordova', :path => '../../node_modules/@capacitor/ios'
-  pod 'CapgoCapacitorSocialLogin', :path => '../../node_modules/@capgo/capacitor-social-login'
-
-  # Firebase native SDKs - DO NOT DELETE THESE
-  pod 'FirebaseCore'
-  pod 'FirebaseAuth'
+  pod 'CapacitorFirebaseAuthentication', :path => '../../node_modules/@capacitor-firebase/authentication'
+  pod 'CapacitorFirebaseApp', :path => '../../node_modules/@capacitor-firebase/app'
 end
 
 target 'App' do

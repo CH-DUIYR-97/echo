@@ -45,7 +45,7 @@ export const Dashboard: React.FC = () => {
   return (
     <div className="min-h-screen bg-stone-950 flex">
       {/* Left Sidebar */}
-      <div className="w-64 bg-stone-950 border-r border-gray-800 flex flex-col">
+      <div className="hidden md:flex md:w-64 bg-stone-950 border-r border-gray-800 flex-col">
         {/* Echo Logo */}
         <div className="p-6 border-b border-gray-800">
           <div className="flex items-center space-x-2">

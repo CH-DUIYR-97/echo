@@ -48,18 +48,21 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onModeChange }) => {
   // Handle form submission
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    
+    console.log('🔵 [SignInForm] Submit button clicked! Email:', email); 
+
     // Reset errors
     setEmailError('')
     setPasswordError('')
     
     // Basic validation
     if (!email.trim()) {
+      console.log('❌ [SignInForm] Email validation failed');
       setEmailError('Email is required')
       return
     }
     
     if (!password.trim()) {
+      console.log('❌ [SignInForm] Password validation failed');
       setPasswordError('Password is required')
       return
     }
@@ -67,9 +70,12 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onModeChange }) => {
     // Advanced password validation
     const passwordValidationError = validatePassword(password)
     if (passwordValidationError) {
+      console.log('❌ [SignInForm] Password validation failed:', passwordValidationError);
       setPasswordError(passwordValidationError)
       return
     }
+
+    console.log('✅ [SignInForm] All validation passed, calling signInWithEmail...');
     
     // Firebase authentication
     setIsLoading(true)
