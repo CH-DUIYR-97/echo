@@ -40,12 +40,33 @@ export const Dashboard: React.FC = () => {
 
   const handleNavigation = (view: 'memories' | 'create') => {
     setCurrentView(view)
+    setIsMenuOpen(false) // Close drawer on mobile after navigation
   }
 
   return (
-    <div className="min-h-screen bg-stone-950 flex">
-      {/* Left Sidebar */}
-      <div className="hidden md:flex md:w-64 bg-stone-950 border-r border-gray-800 flex-col">
+    <div className="min-h-screen bg-stone-950 flex relative">
+      {/* Overlay - only visible on mobile when menu is open */}
+      {isMenuOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={() => setIsMenuOpen(false)}
+        />
+      )}
+
+      {/* Left Sidebar - Slide-out drawer on mobile, always visible on desktop */}
+      <div 
+        className={`
+          fixed md:relative
+          inset-y-0 left-0
+          z-50
+          w-64 
+          bg-stone-950 
+          border-r border-gray-800 
+          flex flex-col
+          transform transition-transform duration-300 ease-in-out
+          ${isMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+        `}
+      >
         {/* Echo Logo */}
         <div className="p-6 border-b border-gray-800">
           <div className="flex items-center space-x-2">
@@ -107,59 +128,54 @@ export const Dashboard: React.FC = () => {
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 relative">
-        {/* Hamburger Menu (positioned absolutely) */}
-        <div className="absolute top-4 right-4 z-50">
-          <div className="relative">
-            {/* Hamburger Button */}
-            <button
-              onClick={() => setIsMenuOpen(!isMenuOpen)}
-              className="p-2 text-white hover:bg-gray-800 rounded-lg transition-colors"
-            >
-              <div className="w-6 h-6 flex flex-col justify-center items-center">
-                <div className="w-[19px] h-0.5 bg-white rounded-full mb-1"></div>
-                <div className="w-[19px] h-0.5 bg-white rounded-full mb-1"></div>
-                <div className="w-[19px] h-0.5 bg-white rounded-full"></div>
-              </div>
-            </button>
+      <div className="flex-1 flex flex-col min-h-screen">
+        {/* Top Bar with Hamburger (only visible on mobile) */}
+        <div className="md:hidden sticky top-0 z-30 bg-stone-950 border-b border-gray-800 px-4 py-3 flex items-center justify-between">
+          {/* Hamburger Button */}
+          <button
+            onClick={() => setIsMenuOpen(!isMenuOpen)}
+            className="p-2 text-white hover:bg-gray-800 rounded-lg transition-colors"
+          >
+            <div className="w-6 h-6 flex flex-col justify-center items-center">
+              <div className="w-[19px] h-0.5 bg-white rounded-full mb-1"></div>
+              <div className="w-[19px] h-0.5 bg-white rounded-full mb-1"></div>
+              <div className="w-[19px] h-0.5 bg-white rounded-full"></div>
+            </div>
+          </button>
 
-            {/* Dropdown Menu */}
-            {isMenuOpen && (
-              <div 
-                className="absolute right-0 mt-2 w-32 bg-black rounded-lg shadow-lg border border-gray-700 z-[60]"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="py-1">
-                  <button
-                    onClick={handleSignOut}
-                    className="w-full text-left px-3 py-1.5 text-white text-sm hover:bg-gray-800 transition-colors"
-                  >
-                    Sign Out
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
+          {/* Echo Logo (mobile) */}
+          <h1 
+            className="text-xl tracking-tight"
+            style={{
+              color: '#FFFFFF',
+              fontFamily: "'Lato', sans-serif",
+              fontWeight: 600,
+            }}
+          >
+            Echo
+          </h1>
+
+          {/* Sign Out Button (mobile) */}
+          <button
+            onClick={handleSignOut}
+            className="px-3 py-1.5 text-sm text-white hover:bg-gray-800 rounded-lg transition-colors"
+          >
+            Sign Out
+          </button>
         </div>
 
         {/* Content Views */}
-        {currentView === 'create' && (
-          <div className="h-full p-6 space-y-6">
-            <CreateView />
-          </div>
-        )}
+        <div className="flex-1 relative">
+          {currentView === 'create' && (
+            <div className="h-full p-6 space-y-6">
+              <CreateView />
+            </div>
+          )}
 
-        {currentView === 'memories' && (
-          <MemoriesView />
-        )}
-
-        {/* Overlay to close menu when clicking outside */}
-        {isMenuOpen && (
-          <div 
-            className="fixed inset-0 z-40" 
-            onClick={() => setIsMenuOpen(false)}
-          ></div>
-        )}
+          {currentView === 'memories' && (
+            <MemoriesView />
+          )}
+        </div>
       </div>
     </div>
   )
