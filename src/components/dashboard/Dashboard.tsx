@@ -130,8 +130,8 @@ export const Dashboard: React.FC = () => {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-h-screen">
         {/* Top Bar with Hamburger (only visible on mobile) */}
-        <div className="md:hidden sticky top-0 z-30 bg-stone-950 border-b border-gray-800 px-4 py-3 flex items-center justify-between">
-          {/* Hamburger Button */}
+        <div className="md:hidden sticky top-0 z-30 bg-stone-950 border-b border-gray-800 px-4 py-3 flex items-center">
+          {/* Hamburger Button - Left*/}
           <button
             onClick={() => setIsMenuOpen(!isMenuOpen)}
             className="p-2 text-white hover:bg-gray-800 rounded-lg transition-colors"
@@ -143,22 +143,25 @@ export const Dashboard: React.FC = () => {
             </div>
           </button>
 
-          {/* Echo Logo (mobile) */}
-          <h1 
-            className="text-xl tracking-tight"
-            style={{
-              color: '#FFFFFF',
-              fontFamily: "'Lato', sans-serif",
-              fontWeight: 600,
-            }}
-          >
-            Echo
-          </h1>
+          
+          {/* Echo Logo - Centered (absolute positioning) */}
+          <div className="absolute left-1/2 transform -translate-x-1/2">
+            <h1 
+              className="text-xl tracking-tight"
+              style={{
+                color: '#FFFFFF',
+                fontFamily: "'Lato', sans-serif",
+                fontWeight: 600,
+              }}
+            >
+              Echo
+            </h1>
+          </div>
 
           {/* Sign Out Button (mobile) */}
           <button
             onClick={handleSignOut}
-            className="px-3 py-1.5 text-sm text-white hover:bg-gray-800 rounded-lg transition-colors"
+            className="ml-auto px-3 py-1.5 text-sm text-white hover:bg-gray-800 rounded-lg transition-colors"
           >
             Sign Out
           </button>
