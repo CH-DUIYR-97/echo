@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { signOutUser } from '../../lib/auth'
-import { Home, Plus } from 'lucide-react'
+import { Home } from 'lucide-react'
 import { getCurrentUser } from '../../lib/auth'
 import { getUserProfile } from '../../lib/database'
 import { CreateView } from './CreateView'
@@ -10,8 +10,8 @@ import { MemoriesView } from './MemoriesView'
 export const Dashboard: React.FC = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [userFirstName, setUserFirstName] = useState<string>('')
-  const [currentView, setCurrentView] = useState<'memories' | 'create'>('memories')
-
+  const [showMemories, setShowMemories] = useState(false) // Default: false = show STT box
+  
   useEffect(() => {
     const fetchUserData = async () => {
       const currentUser = getCurrentUser()
@@ -38,13 +38,18 @@ export const Dashboard: React.FC = () => {
     }
   }
 
-  const handleNavigation = (view: 'memories' | 'create') => {
-    setCurrentView(view)
+  const handleShowMemories = () => {
+    setShowMemories(true)
     setIsMenuOpen(false) // Close drawer on mobile after navigation
   }
 
+  const handleBackToHome = () => {
+    setShowMemories(false)
+    setIsMenuOpen(false)
+  }
+
   return (
-    <div className="min-h-screen bg-stone-950 flex relative">
+    <div className="h-screen bg-stone-950 flex relative overflow-hidden">
       {/* Overlay - only visible on mobile when menu is open */}
       {isMenuOpen && (
         <div 
@@ -67,8 +72,11 @@ export const Dashboard: React.FC = () => {
           ${isMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
         `}
       >
-        {/* Echo Logo */}
-        <div className="p-6 border-b border-gray-800">
+        {/* Echo Logo - Clickable to return to default view */}
+        <div 
+          className="p-6 border-b border-gray-800 cursor-pointer hover:bg-gray-800/30 transition-colors"
+          onClick={handleBackToHome}
+        >
           <div className="flex items-center space-x-2">
             <h1 
               className="text-2xl tracking-tight"
@@ -84,40 +92,24 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Navigation Menu */}
-        <nav className="flex-1 p-4 space-y-2">
+         {/* Navigation Menu - Only Memories */}
+         <nav className="flex-1 p-4 space-y-2">
           <button 
-            onClick={() => handleNavigation('memories')}
+            onClick={handleShowMemories}
             className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 group ${
-              currentView === 'memories' 
+              showMemories 
                 ? 'text-white bg-gray-800' 
                 : 'text-gray-300 hover:text-white hover:bg-gray-800'
             }`}
           >
             <Home className={`w-5 h-5 transition-colors ${
-              currentView === 'memories' 
+              showMemories 
                 ? 'text-purple-400' 
                 : 'group-hover:text-purple-400'
             }`} />
             <span className="text-base">Memories</span>
           </button>
-          
-          <button 
-            onClick={() => handleNavigation('create')}
-            className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 group ${
-              currentView === 'create' 
-                ? 'text-white bg-gray-800' 
-                : 'text-gray-300 hover:text-white hover:bg-gray-800'
-            }`}
-          >
-            <Plus className={`w-5 h-5 transition-colors ${
-              currentView === 'create' 
-                ? 'text-purple-400' 
-                : 'group-hover:text-purple-400'
-            }`} />
-            <span className="text-base">Create</span>
-          </button>
-        </nav>
+        </nav> 
 
         {/* Bottom Section - Personalized Message */}
         <div className="p-4 border-t border-gray-800">
@@ -128,9 +120,9 @@ export const Dashboard: React.FC = () => {
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-h-screen">
+      <div className="flex-1 flex flex-col h-full">
         {/* Top Bar with Hamburger (only visible on mobile) */}
-        <div className="md:hidden sticky top-0 z-30 bg-stone-950 border-b border-gray-800 px-4 py-3 flex items-center">
+        <div className="md:hidden sticky top-0 z-30 bg-stone-950 border-b border-gray-800 px-4 py-3 flex items-center pt-safe">
           {/* Hamburger Button - Left*/}
           <button
             onClick={() => setIsMenuOpen(!isMenuOpen)}
@@ -169,14 +161,12 @@ export const Dashboard: React.FC = () => {
 
         {/* Content Views */}
         <div className="flex-1 relative">
-          {currentView === 'create' && (
-            <div className="h-full p-6 space-y-6">
+          {showMemories ? (
+            <MemoriesView />
+          ) : (
+            <div className="h-full">
               <CreateView />
             </div>
-          )}
-
-          {currentView === 'memories' && (
-            <MemoriesView />
           )}
         </div>
       </div>

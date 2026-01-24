@@ -439,8 +439,8 @@ export const CreateView: React.FC = () => {
   // Render
   // ═══════════════════════════════════════════════════════════════════════════════
   return (
-    <div className="h-full flex flex-col justify-end p-4">
-      <div className="w-full max-w-3xl mx-auto mb-4">
+    <div className="h-full flex flex-col justify-end px-4 pt-4" style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}>
+      <div className="w-full max-w-3xl mx-auto" style={{ marginBottom: 'max(16px, env(safe-area-inset-bottom))' }}>
         {/* Main input box - same style when recording, with drag-and-drop */}
         <div 
           className={`relative rounded-2xl p-4 shadow-xl transition-all duration-300 ${

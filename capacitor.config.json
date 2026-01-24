@@ -9,8 +9,9 @@
     }
   },
   "ios": {
-    "contentInset": "always",
-    "allowsLinkPreview": false
+    "contentInset": "never",
+    "allowsLinkPreview": false,
+    "backgroundColor": "#0c0a09"
   },
   "server": {
     "cleartext": true,
