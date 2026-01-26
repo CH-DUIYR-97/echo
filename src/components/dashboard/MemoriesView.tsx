@@ -150,16 +150,6 @@ useEffect(() => {
     }
   }
 
-  if (!uid) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-gray-400">Please sign in to view your memories</p>
-        </div>
-      </div>
-    )
-  }
-
   if (loading && posts.length === 0) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -176,7 +166,7 @@ useEffect(() => {
       <div className="h-full flex items-center justify-center">
         <div className="text-center">
           <h2 className="text-2xl font-bold text-white mb-4">Welcome to Echo</h2>
-          <p className="text-gray-400">Click "Create" to start writing your journal entry</p>
+          <p className="text-gray-400">Head to Home to create your first memory</p>
         </div>
       </div>
     )

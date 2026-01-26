@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { signOutUser } from '../../lib/auth'
-import { Home } from 'lucide-react'
+import { Home, BookOpen } from 'lucide-react'
 import { getCurrentUser } from '../../lib/auth'
 import { getUserProfile } from '../../lib/database'
 import { CreateView } from './CreateView'
@@ -92,24 +92,40 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
 
-         {/* Navigation Menu - Only Memories */}
-         <nav className="flex-1 p-4 space-y-2">
-          <button 
-            onClick={handleShowMemories}
-            className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 group ${
-              showMemories 
-                ? 'text-white bg-gray-800' 
-                : 'text-gray-300 hover:text-white hover:bg-gray-800'
-            }`}
-          >
-            <Home className={`w-5 h-5 transition-colors ${
-              showMemories 
-                ? 'text-purple-400' 
-                : 'group-hover:text-purple-400'
-            }`} />
-            <span className="text-base">Memories</span>
-          </button>
-        </nav> 
+         {/* Navigation Menu - Home and Memories */}
+<nav className="flex-1 p-4 space-y-2">
+  <button 
+    onClick={handleBackToHome}
+    className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 group ${
+      !showMemories 
+        ? 'text-white bg-gray-800' 
+        : 'text-gray-300 hover:text-white hover:bg-gray-800'
+    }`}
+  >
+    <Home className={`w-5 h-5 transition-colors ${
+      !showMemories 
+        ? 'text-purple-400' 
+        : 'group-hover:text-purple-400'
+    }`} />
+    <span className="text-base">Home</span>
+  </button>
+  
+  <button 
+    onClick={handleShowMemories}
+    className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 group ${
+      showMemories 
+        ? 'text-white bg-gray-800' 
+        : 'text-gray-300 hover:text-white hover:bg-gray-800'
+    }`}
+  >
+    <BookOpen className={`w-5 h-5 transition-colors ${
+      showMemories 
+        ? 'text-purple-400' 
+        : 'group-hover:text-purple-400'
+    }`} />
+    <span className="text-base">Memories</span>
+  </button>
+</nav>
 
         {/* Bottom Section - Personalized Message */}
         <div className="p-4 border-t border-gray-800">
